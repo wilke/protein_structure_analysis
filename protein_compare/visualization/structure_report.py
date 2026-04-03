@@ -5,8 +5,10 @@ generating HTML and PDF reports with embedded figures.
 """
 
 import base64
+import json as _json
 from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
@@ -187,6 +189,18 @@ class SequenceComposition:
     type_fractions: dict
     chains: list
 
+    def to_dict(self) -> dict:
+        """Serialize to JSON-safe dictionary."""
+        return {
+            "length": self.length,
+            "aa_counts": self.aa_counts,
+            "aa_fractions": {k: round(v, 4) for k, v in self.aa_fractions.items()},
+            "molecular_weight": round(self.molecular_weight, 1),
+            "type_counts": self.type_counts,
+            "type_fractions": {k: round(v, 4) for k, v in self.type_fractions.items()},
+            "chains": self.chains,
+        }
+
 
 @dataclass
 class ContactAnalysis:
@@ -200,6 +214,25 @@ class ContactAnalysis:
     n_very_long_range: int
     contacts_per_residue: np.ndarray
 
+    def to_dict(self, include_matrices: bool = False) -> dict:
+        """Serialize to JSON-safe dictionary.
+
+        Args:
+            include_matrices: If True, include the full contact map and
+                per-residue arrays. These can be large for big structures.
+        """
+        d = {
+            "n_contacts": self.n_contacts,
+            "contact_density": round(self.contact_density, 4),
+            "n_short_range": self.n_short_range,
+            "n_medium_range": self.n_medium_range,
+            "n_long_range": self.n_long_range,
+            "n_very_long_range": self.n_very_long_range,
+        }
+        if include_matrices:
+            d["contacts_per_residue"] = self.contacts_per_residue.tolist()
+        return d
+
 
 @dataclass
 class SSAnalysis:
@@ -212,6 +245,18 @@ class SSAnalysis:
     sheet_count: int
     coil_count: int
 
+    def to_dict(self) -> dict:
+        """Serialize to JSON-safe dictionary."""
+        return {
+            "ss_sequence": "".join(self.ss_sequence),
+            "helix_fraction": round(self.helix_fraction, 4),
+            "sheet_fraction": round(self.sheet_fraction, 4),
+            "coil_fraction": round(self.coil_fraction, 4),
+            "helix_count": self.helix_count,
+            "sheet_count": self.sheet_count,
+            "coil_count": self.coil_count,
+        }
+
 
 @dataclass
 class PAEAnalysis:
@@ -223,6 +268,29 @@ class PAEAnalysis:
     n_domains: int
     inter_domain_pae: Optional[float]  # Mean PAE between domains
     intra_domain_pae: float  # Mean PAE within domains
+
+    def to_dict(self, include_matrix: bool = False) -> dict:
+        """Serialize to JSON-safe dictionary.
+
+        Args:
+            include_matrix: If True, include the full NxN PAE matrix.
+        """
+        d: dict = {
+            "mean_pae": round(self.mean_pae, 2),
+            "median_pae": round(self.median_pae, 2),
+            "n_domains": self.n_domains,
+            "domains": self.domains,
+            "intra_domain_pae": round(self.intra_domain_pae, 2),
+        }
+        if self.inter_domain_pae is not None:
+            d["inter_domain_pae"] = round(self.inter_domain_pae, 2)
+        if self.pae_data.ptm is not None:
+            d["ptm"] = round(self.pae_data.ptm, 4)
+        if self.pae_data.iptm is not None:
+            d["iptm"] = round(self.pae_data.iptm, 4)
+        if include_matrix:
+            d["pae_matrix"] = self.pae_data.pae_matrix.tolist()
+        return d
 
 
 class StructureCharacterizer:
@@ -1015,6 +1083,89 @@ class StructureCharacterizer:
             glossary_figs = self._create_glossary_pages()
             for fig in glossary_figs:
                 pdf.savefig(fig, bbox_inches="tight"); plt.close(fig)
+
+    def generate_json_report(self, output_path: str, include_per_residue: bool = True) -> dict:
+        """Generate JSON analysis report with all computed data.
+
+        Args:
+            output_path: Path to write JSON file.
+            include_per_residue: Include per-residue arrays (pLDDT, contacts,
+                secondary structure). Set False for compact output.
+
+        Returns:
+            The analysis dictionary that was written to file.
+        """
+        seq_comp = self.analyze_sequence_composition()
+        conf_stats = self.analyze_confidence()
+        contact_analysis = self.analyze_contacts()
+        ss_analysis = self.analyze_secondary_structure()
+        pae_analysis = self.analyze_pae()  # May be None
+
+        analysis: dict = {
+            "metadata": {
+                "generated_at": datetime.now().isoformat(),
+                "tool": "protein_compare",
+                "command": "characterize",
+                "structure_name": self.structure.name,
+                "structure_type": self.structure_type,
+                "source_path": str(self.structure.source_path) if self.structure.source_path else None,
+            },
+            "structure": {
+                "name": self.structure.name,
+                "n_residues": self.structure.n_residues,
+                "sequence": self.structure.sequence,
+                "chains": seq_comp.chains,
+                "is_predicted": self.is_predicted,
+            },
+            "sequence_composition": seq_comp.to_dict(),
+            "confidence": conf_stats.to_dict(),
+            "contacts": contact_analysis.to_dict(include_matrices=include_per_residue),
+            "secondary_structure": ss_analysis.to_dict(),
+        }
+
+        # Per-residue arrays (for charts)
+        if include_per_residue:
+            analysis["per_residue"] = {
+                "plddt": [round(float(v), 2) for v in self.structure.plddt],
+                "residue_ids": [
+                    {"chain": rid[0], "resnum": rid[1]}
+                    for rid in self.structure.residue_ids
+                ],
+            }
+
+        # PAE analysis (optional)
+        if pae_analysis is not None:
+            analysis["pae"] = pae_analysis.to_dict(include_matrix=include_per_residue)
+
+        # Chai scores (optional)
+        if self.has_chai_scores:
+            scores = self.chai_scores
+            analysis["chai_scores"] = {
+                "aggregate_score": round(float(scores.aggregate_score), 4),
+                "ptm": round(float(scores.ptm), 4),
+                "iptm": round(float(scores.iptm), 4),
+                "has_inter_chain_clashes": bool(scores.has_inter_chain_clashes),
+                "n_chains": scores.n_chains,
+                "is_multimer": scores.is_multimer,
+            }
+
+        # MSA depth (optional)
+        if self.has_msa_depth:
+            msa = self.msa_depth
+            analysis["msa_depth"] = {
+                "mean_depth": round(float(msa.mean_depth), 1),
+                "median_depth": round(float(msa.median_depth), 1),
+                "max_depth": int(msa.max_depth),
+                "min_depth": int(msa.min_depth),
+                "n_residues": msa.n_residues,
+            }
+            if include_per_residue:
+                analysis["msa_depth"]["per_residue_depth"] = msa.depths.tolist()
+
+        with open(output_path, "w") as f:
+            _json.dump(analysis, f, indent=2)
+
+        return analysis
 
     def _create_summary_page(self, seq_comp, conf_stats, contact_analysis, ss_analysis, pae_analysis=None) -> Figure:
         """Create summary page for PDF."""
