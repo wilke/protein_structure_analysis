@@ -36,7 +36,7 @@ From: python:3.12-slim
     export PATH="/usr/local/bin:$PATH"
 
 %runscript
-    exec python -m protein_compare "$@"
+    exec "$@"
 
 %help
     Protein structure analysis and comparison tool.

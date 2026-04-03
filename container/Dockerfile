@@ -45,5 +45,4 @@ RUN protein_compare --help
 
 WORKDIR /data
 
-ENTRYPOINT ["protein_compare"]
-CMD ["--help"]
+CMD ["python", "-m", "protein_compare", "--help"]
