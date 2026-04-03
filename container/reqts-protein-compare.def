@@ -1,0 +1,36 @@
+
+Bootstrap: localimage
+From: {{base}}
+
+%post -c /bin/bash
+    export DEBIAN_FRONTEND=noninteractive
+
+    # System dependencies for DSSP and matplotlib
+    apt-get update && apt-get install -y --no-install-recommends \
+        dssp \
+        libgl1-mesa-glx \
+        libglib2.0-0 \
+        libfontconfig1 \
+    && rm -rf /var/lib/apt/lists/*
+
+    conda_dir=/opt/conda-report
+
+    conda create -p $conda_dir --yes --quiet python=3.12
+
+    . /opt/miniforge/etc/profile.d/conda.sh
+    conda activate $conda_dir
+
+    # Install protein_compare
+    pip install --no-cache-dir \
+        "protein_compare @ git+https://github.com/BV-BRC/protein_structure_analysis.git"
+
+    # Clean up
+    conda clean --all --force-pkgs-dirs --yes
+    pip cache purge
+
+%environment
+    export MPLBACKEND=Agg
+
+%runscript
+
+%labels

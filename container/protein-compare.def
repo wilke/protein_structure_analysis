@@ -1,0 +1,51 @@
+Bootstrap: docker
+From: python:3.12-slim
+
+%labels
+    Author BV-BRC Team
+    Version 0.1.0
+    Description Protein structure analysis and comparison tool
+
+%files
+    setup.py /app/setup.py
+    README.md /app/README.md
+    protein_compare /app/protein_compare
+
+%post -c /bin/bash
+    export DEBIAN_FRONTEND=noninteractive
+
+    # System dependencies for matplotlib rendering and DSSP
+    apt-get update && apt-get install -y --no-install-recommends \
+        dssp \
+        libgl1-mesa-glx \
+        libglib2.0-0 \
+        libfontconfig1 \
+    && rm -rf /var/lib/apt/lists/*
+
+    # Install protein_compare from local copy
+    cd /app && pip install --no-cache-dir .
+    pip cache purge
+
+    # Verify installation
+    python -m protein_compare --help
+
+%environment
+    export PYTHONUNBUFFERED=1
+    # Use non-interactive matplotlib backend (no display needed)
+    export MPLBACKEND=Agg
+    export PATH="/usr/local/bin:$PATH"
+
+%runscript
+    exec "$@"
+
+%help
+    Protein structure analysis and comparison tool.
+
+    Characterize a single structure:
+      apptainer run protein-compare.sif characterize model_1.pdb -o report
+
+    Compare multiple structures:
+      apptainer run protein-compare.sif batch *.pdb -o results.csv
+
+    Pairwise comparison:
+      apptainer run protein-compare.sif compare struct1.pdb struct2.pdb
