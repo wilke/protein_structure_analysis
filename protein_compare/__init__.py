@@ -5,7 +5,7 @@ computational prediction tools (AlphaFold, ESMFold, Chai, Boltz),
 with pLDDT confidence score integration.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __author__ = "Protein Compare"
 
 from protein_compare.io.parser import StructureLoader, ProteinStructure

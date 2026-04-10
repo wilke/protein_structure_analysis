@@ -7,7 +7,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="protein_compare",
-    version="0.1.0",
+    version="0.2.0",
     author="Protein Compare",
     description="Batch comparison tool for predicted protein structures",
     long_description=long_description,
