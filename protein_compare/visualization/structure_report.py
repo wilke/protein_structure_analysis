@@ -182,8 +182,8 @@ GLOSSARY = {
 class SequenceComposition:
     """Sequence composition analysis results."""
     length: int
-    aa_counts: dict
-    aa_fractions: dict
+    residue_counts: dict
+    residue_fractions: dict
     molecular_weight: float
     type_counts: dict
     type_fractions: dict
@@ -193,8 +193,8 @@ class SequenceComposition:
         """Serialize to JSON-safe dictionary."""
         return {
             "length": self.length,
-            "aa_counts": self.aa_counts,
-            "aa_fractions": {k: round(v, 4) for k, v in self.aa_fractions.items()},
+            "residue_counts": self.residue_counts,
+            "residue_fractions": {k: round(v, 4) for k, v in self.residue_fractions.items()},
             "molecular_weight": round(self.molecular_weight, 1),
             "type_counts": self.type_counts,
             "type_fractions": {k: round(v, 4) for k, v in self.type_fractions.items()},
@@ -402,8 +402,8 @@ class StructureCharacterizer:
             return self._seq_comp
         seq = self.structure.sequence
         length = len(seq)
-        aa_counts = dict(Counter(seq))
-        aa_fractions = {aa: c / length for aa, c in aa_counts.items()}
+        residue_counts = dict(Counter(seq))
+        residue_fractions = {aa: c / length for aa, c in residue_counts.items()}
         chains = list(set(rid[0] for rid in self.structure.residue_ids))
 
         if self.structure.is_nucleic_acid:
@@ -425,7 +425,7 @@ class StructureCharacterizer:
                 type_counts[t] = type_counts.get(t, 0) + 1
             type_fractions = {t: c / length for t, c in type_counts.items()}
 
-        self._seq_comp = SequenceComposition(length, aa_counts, aa_fractions, mw, type_counts, type_fractions, chains)
+        self._seq_comp = SequenceComposition(length, residue_counts, residue_fractions, mw, type_counts, type_fractions, chains)
         return self._seq_comp
 
     def analyze_confidence(self) -> ConfidenceStats:
@@ -736,8 +736,8 @@ class StructureCharacterizer:
         if self.structure.is_nucleic_acid:
             nt_order = ["A", "C", "G", "T", "U"]
             nt_colors = {"A": "#e41a1c", "C": "#377eb8", "G": "#4daf4a", "T": "#984ea3", "U": "#ff7f00"}
-            present = [nt for nt in nt_order if comp.aa_fractions.get(nt, 0) > 0]
-            fracs = [comp.aa_fractions.get(nt, 0) * 100 for nt in present]
+            present = [nt for nt in nt_order if comp.residue_fractions.get(nt, 0) > 0]
+            fracs = [comp.residue_fractions.get(nt, 0) * 100 for nt in present]
             colors = [nt_colors.get(nt, "#999999") for nt in present]
             ax.bar(present, fracs, color=colors, edgecolor="white", linewidth=0.5)
             expected = 100 / len(present) if present else 25
@@ -746,7 +746,7 @@ class StructureCharacterizer:
             ax.set_title("Nucleotide Composition")
         else:
             aa_order = ["A","V","L","I","M","F","W","S","T","N","Q","Y","C","K","R","H","D","E","G","P"]
-            fracs = [comp.aa_fractions.get(aa, 0) * 100 for aa in aa_order]
+            fracs = [comp.residue_fractions.get(aa, 0) * 100 for aa in aa_order]
             colors = [AA_TYPE_COLORS[AA_PROPERTIES[aa]["type"]] for aa in aa_order]
             ax.bar(aa_order, fracs, color=colors, edgecolor="white", linewidth=0.5)
             ax.axhline(5, color="gray", linestyle="--", alpha=0.7, label="Expected (5%)")
