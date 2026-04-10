@@ -347,16 +347,22 @@ class MSADepthLoader:
 
 @dataclass
 class ProteinStructure:
-    """Container for protein structure data with confidence scores."""
+    """Container for protein/nucleic acid structure data with confidence scores."""
 
     name: str
-    ca_coords: np.ndarray  # Cα coordinates, shape (n_residues, 3)
-    cb_coords: np.ndarray  # Cβ coordinates, shape (n_residues, 3)
+    ca_coords: np.ndarray  # Backbone coordinates: Cα (protein) or C3' (NA), shape (n_residues, 3)
+    cb_coords: np.ndarray  # Sidechain proxy: Cβ/Cα (protein) or C1' (NA), shape (n_residues, 3)
     plddt: np.ndarray  # pLDDT scores per residue, shape (n_residues,)
     residue_ids: list[tuple[str, int]]  # (chain_id, residue_number)
-    sequence: str  # One-letter amino acid sequence
+    sequence: str  # One-letter sequence (amino acids or nucleotides)
     source_path: Optional[Path] = None  # Original PDB file path
     biopython_structure: Optional[Structure] = field(default=None, repr=False)
+    molecule_type: str = "protein"  # "protein", "dna", "rna", or "mixed"
+
+    @property
+    def is_nucleic_acid(self) -> bool:
+        """True if this structure contains DNA or RNA."""
+        return self.molecule_type in ("dna", "rna")
 
     @property
     def n_residues(self) -> int:
@@ -391,6 +397,16 @@ class StructureLoader:
         # Non-standard
         "MSE": "M",  # Selenomethionine
         "UNK": "X",  # Unknown
+    }
+
+    # Nucleic acid residue name to 1-letter mapping
+    NA_MAP = {
+        # DNA
+        "DA": "A", "DC": "C", "DG": "G", "DT": "T", "DU": "U",
+        # RNA
+        "A": "A", "C": "C", "G": "G", "U": "U",
+        # Modified
+        "PSU": "U",  # Pseudouridine
     }
 
     def __init__(self, quiet: bool = True):
@@ -442,6 +458,9 @@ class StructureLoader:
         plddt_scores = []
         residue_ids = []
         sequence = []
+        has_protein = False
+        has_na = False
+        na_type = None  # "dna" or "rna"
 
         for model in structure:
             for chain in model:
@@ -450,36 +469,54 @@ class StructureLoader:
                     if residue.get_id()[0] != " ":
                         continue
 
-                    resname = residue.get_resname()
-                    if resname not in self.AA_MAP:
-                        continue
+                    resname = residue.get_resname().strip()
 
-                    # Extract Cα atom
-                    if "CA" not in residue:
-                        continue
-                    ca_atom = residue["CA"]
-                    ca_coords.append(ca_atom.get_coord())
+                    # Try protein first
+                    if resname in self.AA_MAP:
+                        if "CA" not in residue:
+                            continue
+                        has_protein = True
+                        ca_atom = residue["CA"]
+                        ca_coords.append(ca_atom.get_coord())
+                        cb_coords.append(
+                            residue["CB"].get_coord() if "CB" in residue
+                            else ca_atom.get_coord()
+                        )
+                        plddt_scores.append(ca_atom.get_bfactor())
+                        residue_ids.append((chain.get_id(), residue.get_id()[1]))
+                        sequence.append(self.AA_MAP[resname])
 
-                    # Extract Cβ atom (use Cα for glycine)
-                    if "CB" in residue:
-                        cb_coords.append(residue["CB"].get_coord())
-                    else:
-                        cb_coords.append(ca_atom.get_coord())
-
-                    # Extract pLDDT from B-factor
-                    # AlphaFold/ESMFold store pLDDT (0-100) in B-factor column
-                    plddt = ca_atom.get_bfactor()
-                    plddt_scores.append(plddt)
-
-                    # Store residue info
-                    residue_ids.append((chain.get_id(), residue.get_id()[1]))
-                    sequence.append(self.AA_MAP[resname])
+                    # Try nucleic acid
+                    elif resname in self.NA_MAP:
+                        if "C3'" not in residue:
+                            continue
+                        has_na = True
+                        if na_type is None:
+                            na_type = "dna" if resname.startswith("D") else "rna"
+                        backbone = residue["C3'"]
+                        ca_coords.append(backbone.get_coord())
+                        # Use C1' (glycosidic carbon) as sidechain proxy
+                        cb_coords.append(
+                            residue["C1'"].get_coord() if "C1'" in residue
+                            else backbone.get_coord()
+                        )
+                        plddt_scores.append(backbone.get_bfactor())
+                        residue_ids.append((chain.get_id(), residue.get_id()[1]))
+                        sequence.append(self.NA_MAP[resname])
 
             # Only process first model
             break
 
         if not ca_coords:
             raise ValueError(f"No valid residues found in {path}")
+
+        # Determine molecule type
+        if has_protein and has_na:
+            mol_type = "mixed"
+        elif has_na:
+            mol_type = na_type or "dna"
+        else:
+            mol_type = "protein"
 
         return ProteinStructure(
             name=path.stem,
@@ -490,6 +527,7 @@ class StructureLoader:
             sequence="".join(sequence),
             source_path=path,
             biopython_structure=structure,
+            molecule_type=mol_type,
         )
 
     def load_multiple(self, paths: list[str | Path]) -> list[ProteinStructure]:

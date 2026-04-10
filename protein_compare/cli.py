@@ -526,8 +526,10 @@ def characterize(structure, output, fmt, contact_cutoff, dpi, is_experimental, i
     )
 
     # Show structure info with appropriate terminology
+    mol_label = struct.molecule_type.upper() if struct.is_nucleic_acid else "protein"
+    unit = "nucleotides" if struct.is_nucleic_acid else "residues"
     if characterizer.is_predicted:
-        click.echo(f"  {struct.name}: {struct.n_residues} residues, mean pLDDT: {struct.mean_plddt:.1f}")
+        click.echo(f"  {struct.name}: {struct.n_residues} {unit} ({mol_label}), mean pLDDT: {struct.mean_plddt:.1f}")
         click.echo(f"  Structure type: Predicted (pLDDT confidence scores)")
         if characterizer.has_pae:
             pae_analysis = characterizer.analyze_pae()
