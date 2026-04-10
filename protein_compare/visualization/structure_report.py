@@ -182,8 +182,8 @@ GLOSSARY = {
 class SequenceComposition:
     """Sequence composition analysis results."""
     length: int
-    aa_counts: dict
-    aa_fractions: dict
+    residue_counts: dict
+    residue_fractions: dict
     molecular_weight: float
     type_counts: dict
     type_fractions: dict
@@ -193,8 +193,8 @@ class SequenceComposition:
         """Serialize to JSON-safe dictionary."""
         return {
             "length": self.length,
-            "aa_counts": self.aa_counts,
-            "aa_fractions": {k: round(v, 4) for k, v in self.aa_fractions.items()},
+            "residue_counts": self.residue_counts,
+            "residue_fractions": {k: round(v, 4) for k, v in self.residue_fractions.items()},
             "molecular_weight": round(self.molecular_weight, 1),
             "type_counts": self.type_counts,
             "type_fractions": {k: round(v, 4) for k, v in self.type_fractions.items()},
@@ -397,21 +397,35 @@ class StructureCharacterizer:
         self._pae_analysis: Optional[PAEAnalysis] = None
 
     def analyze_sequence_composition(self) -> SequenceComposition:
-        """Analyze amino acid composition."""
+        """Analyze sequence composition (amino acids or nucleotides)."""
         if self._seq_comp is not None:
             return self._seq_comp
         seq = self.structure.sequence
         length = len(seq)
-        aa_counts = dict(Counter(seq))
-        aa_fractions = {aa: c / length for aa, c in aa_counts.items()}
-        mw = sum(AA_PROPERTIES.get(aa, AA_PROPERTIES["X"])["mw"] for aa in seq) - 18.015 * (length - 1)
-        type_counts = {"hydrophobic": 0, "polar": 0, "positive": 0, "negative": 0, "special": 0}
-        for aa in seq:
-            t = AA_PROPERTIES.get(aa, AA_PROPERTIES["X"])["type"]
-            type_counts[t] = type_counts.get(t, 0) + 1
-        type_fractions = {t: c / length for t, c in type_counts.items()}
+        residue_counts = dict(Counter(seq))
+        residue_fractions = {aa: c / length for aa, c in residue_counts.items()}
         chains = list(set(rid[0] for rid in self.structure.residue_ids))
-        self._seq_comp = SequenceComposition(length, aa_counts, aa_fractions, mw, type_counts, type_fractions, chains)
+
+        if self.structure.is_nucleic_acid:
+            # Nucleic acid — skip molecular weight and residue type classification
+            mw = 0.0
+            type_counts = {"purine": 0, "pyrimidine": 0}
+            purines = set("AG")
+            for nt in seq:
+                if nt in purines:
+                    type_counts["purine"] += 1
+                else:
+                    type_counts["pyrimidine"] += 1
+            type_fractions = {t: c / length for t, c in type_counts.items()}
+        else:
+            mw = sum(AA_PROPERTIES.get(aa, AA_PROPERTIES["X"])["mw"] for aa in seq) - 18.015 * (length - 1)
+            type_counts = {"hydrophobic": 0, "polar": 0, "positive": 0, "negative": 0, "special": 0}
+            for aa in seq:
+                t = AA_PROPERTIES.get(aa, AA_PROPERTIES["X"])["type"]
+                type_counts[t] = type_counts.get(t, 0) + 1
+            type_fractions = {t: c / length for t, c in type_counts.items()}
+
+        self._seq_comp = SequenceComposition(length, residue_counts, residue_fractions, mw, type_counts, type_fractions, chains)
         return self._seq_comp
 
     def analyze_confidence(self) -> ConfidenceStats:
@@ -444,14 +458,18 @@ class StructureCharacterizer:
         return self._contact_analysis
 
     def analyze_secondary_structure(self) -> SSAnalysis:
-        """Analyze secondary structure."""
+        """Analyze secondary structure (protein only; NA returns all coil)."""
         if self._ss_analysis is not None:
             return self._ss_analysis
-        try:
-            ss_seq = self.ss_analyzer.assign_ss(self.structure, simplify=True)
-        except Exception:
-            ss_seq = ["C"] * self.structure.n_residues
-        n = len(ss_seq)
+        n = self.structure.n_residues
+        if self.structure.is_nucleic_acid:
+            # DSSP does not assign secondary structure for nucleic acids
+            ss_seq = ["C"] * n
+        else:
+            try:
+                ss_seq = self.ss_analyzer.assign_ss(self.structure, simplify=True)
+            except Exception:
+                ss_seq = ["C"] * n
         h, e, c = ss_seq.count("H"), ss_seq.count("E"), ss_seq.count("C")
         self._ss_analysis = SSAnalysis(ss_seq, h/n if n else 0, e/n if n else 0, c/n if n else 0, h, e, c)
         return self._ss_analysis
@@ -711,18 +729,33 @@ class StructureCharacterizer:
         return fig
 
     def plot_aa_composition(self) -> Figure:
-        """Plot amino acid composition."""
+        """Plot sequence composition (amino acids or nucleotides)."""
         fig, ax = plt.subplots(figsize=(12, 5))
         comp = self.analyze_sequence_composition()
-        aa_order = ["A","V","L","I","M","F","W","S","T","N","Q","Y","C","K","R","H","D","E","G","P"]
-        fracs = [comp.aa_fractions.get(aa, 0) * 100 for aa in aa_order]
-        colors = [AA_TYPE_COLORS[AA_PROPERTIES[aa]["type"]] for aa in aa_order]
-        ax.bar(aa_order, fracs, color=colors, edgecolor="white", linewidth=0.5)
-        ax.axhline(5, color="gray", linestyle="--", alpha=0.7, label="Expected (5%)")
-        ax.set_xlabel("Amino Acid"); ax.set_ylabel("Frequency (%)")
-        ax.set_title("Amino Acid Composition")
-        legend_patches = [mpatches.Patch(color=c, label=t.title()) for t, c in AA_TYPE_COLORS.items()]
-        ax.legend(handles=legend_patches, loc="upper right", fontsize=9)
+
+        if self.structure.is_nucleic_acid:
+            nt_order = ["A", "C", "G", "T", "U"]
+            nt_colors = {"A": "#e41a1c", "C": "#377eb8", "G": "#4daf4a", "T": "#984ea3", "U": "#ff7f00"}
+            present = [nt for nt in nt_order if comp.residue_fractions.get(nt, 0) > 0]
+            fracs = [comp.residue_fractions.get(nt, 0) * 100 for nt in present]
+            colors = [nt_colors.get(nt, "#999999") for nt in present]
+            ax.bar(present, fracs, color=colors, edgecolor="white", linewidth=0.5)
+            expected = 100 / len(present) if present else 25
+            ax.axhline(expected, color="gray", linestyle="--", alpha=0.7, label=f"Expected ({expected:.0f}%)")
+            ax.set_xlabel("Nucleotide"); ax.set_ylabel("Frequency (%)")
+            ax.set_title("Nucleotide Composition")
+        else:
+            aa_order = ["A","V","L","I","M","F","W","S","T","N","Q","Y","C","K","R","H","D","E","G","P"]
+            fracs = [comp.residue_fractions.get(aa, 0) * 100 for aa in aa_order]
+            colors = [AA_TYPE_COLORS[AA_PROPERTIES[aa]["type"]] for aa in aa_order]
+            ax.bar(aa_order, fracs, color=colors, edgecolor="white", linewidth=0.5)
+            ax.axhline(5, color="gray", linestyle="--", alpha=0.7, label="Expected (5%)")
+            ax.set_xlabel("Amino Acid"); ax.set_ylabel("Frequency (%)")
+            ax.set_title("Amino Acid Composition")
+            legend_patches = [mpatches.Patch(color=c, label=t.title()) for t, c in AA_TYPE_COLORS.items()]
+            ax.legend(handles=legend_patches, loc="upper right", fontsize=9)
+
+        ax.legend(loc="upper right", fontsize=9)
         fig.tight_layout()
         return fig
 
@@ -1007,9 +1040,11 @@ class StructureCharacterizer:
             "contact_order": self.plot_contact_order(),
             "residue_contacts": self.plot_residue_contacts(),
             "aa_composition": self.plot_aa_composition(),
-            "ss_composition": self.plot_ss_composition(),
-            "ss_profile": self.plot_ss_profile(),
         }
+        # Secondary structure analysis only for proteins (DSSP doesn't work on NA)
+        if not self.structure.is_nucleic_acid:
+            figures["ss_composition"] = self.plot_ss_composition()
+            figures["ss_profile"] = self.plot_ss_profile()
 
         # Add PAE figures if available
         if self.has_pae:
@@ -1063,9 +1098,11 @@ class StructureCharacterizer:
         with PdfPages(output_path) as pdf:
             fig = self._create_summary_page(seq_comp, conf_stats, contact_analysis, ss_analysis, pae_analysis)
             pdf.savefig(fig, bbox_inches="tight"); plt.close(fig)
-            for plot_fn in [self.plot_aa_composition, self.plot_plddt_distribution, self.plot_plddt_profile,
-                            self.plot_contact_map, self.plot_contact_order, self.plot_residue_contacts,
-                            self.plot_ss_composition, self.plot_ss_profile]:
+            plot_fns = [self.plot_aa_composition, self.plot_plddt_distribution, self.plot_plddt_profile,
+                        self.plot_contact_map, self.plot_contact_order, self.plot_residue_contacts]
+            if not self.structure.is_nucleic_acid:
+                plot_fns.extend([self.plot_ss_composition, self.plot_ss_profile])
+            for plot_fn in plot_fns:
                 fig = plot_fn()
                 pdf.savefig(fig, bbox_inches="tight"); plt.close(fig)
             # Add PAE plots if available
@@ -1112,6 +1149,7 @@ class StructureCharacterizer:
             },
             "structure": {
                 "name": self.structure.name,
+                "molecule_type": self.structure.molecule_type,
                 "n_residues": self.structure.n_residues,
                 "sequence": self.structure.sequence,
                 "chains": seq_comp.chains,
@@ -1371,20 +1409,21 @@ class StructureCharacterizer:
 
     <div class="section" id="summary"><h2>Summary</h2>
         <div class="metrics-grid">
-            <div class="metric-box"><div class="metric-value">{seq_comp.length}</div><div class="metric-label">Residues</div></div>
-            <div class="metric-box"><div class="metric-value">{seq_comp.molecular_weight/1000:.1f} kDa</div><div class="metric-label">Molecular Weight</div></div>
+            <div class="metric-box"><div class="metric-value">{seq_comp.length}</div><div class="metric-label">{"Nucleotides" if self.structure.is_nucleic_acid else "Residues"}</div></div>
+            {"" if self.structure.is_nucleic_acid else f'<div class="metric-box"><div class="metric-value">{seq_comp.molecular_weight/1000:.1f} kDa</div><div class="metric-label">Molecular Weight</div></div>'}
             <div class="metric-box {highlight_class}"><div class="metric-value">{conf_stats.mean:.1f}{score_unit}</div><div class="metric-label">{mean_label}</div></div>
             <div class="metric-box highlight"><div class="metric-value">{summary_quality_value}</div><div class="metric-label">{summary_quality_label}</div></div>
             <div class="metric-box"><div class="metric-value">{contact_analysis.n_contacts}</div><div class="metric-label">Contacts</div></div>
-            <div class="metric-box"><div class="metric-value">{ss_analysis.helix_fraction:.0%}/{ss_analysis.sheet_fraction:.0%}</div><div class="metric-label">Helix/Sheet</div></div>
+            {"" if self.structure.is_nucleic_acid else f'<div class="metric-box"><div class="metric-value">{ss_analysis.helix_fraction:.0%}/{ss_analysis.sheet_fraction:.0%}</div><div class="metric-label">Helix/Sheet</div></div>'}
         </div>
     </div>
-    <div class="section" id="sequence"><h2>Sequence Analysis</h2>
+    <div class="section" id="sequence"><h2>{"Nucleotide" if self.structure.is_nucleic_acid else "Sequence"} Analysis</h2>
         <div class="metrics-grid">
-            <div class="metric-box"><div class="metric-value">{seq_comp.type_fractions.get("hydrophobic", 0):.0%}</div><div class="metric-label">Hydrophobic</div></div>
+            {f"""<div class="metric-box"><div class="metric-value">{seq_comp.type_fractions.get("purine", 0):.0%}</div><div class="metric-label">Purine (A/G)</div></div>
+            <div class="metric-box"><div class="metric-value">{seq_comp.type_fractions.get("pyrimidine", 0):.0%}</div><div class="metric-label">Pyrimidine (C/T/U)</div></div>""" if self.structure.is_nucleic_acid else f"""<div class="metric-box"><div class="metric-value">{seq_comp.type_fractions.get("hydrophobic", 0):.0%}</div><div class="metric-label">Hydrophobic</div></div>
             <div class="metric-box"><div class="metric-value">{seq_comp.type_fractions.get("polar", 0):.0%}</div><div class="metric-label">Polar</div></div>
             <div class="metric-box"><div class="metric-value">{seq_comp.type_fractions.get("positive", 0):.0%}</div><div class="metric-label">Positive (+)</div></div>
-            <div class="metric-box"><div class="metric-value">{seq_comp.type_fractions.get("negative", 0):.0%}</div><div class="metric-label">Negative (-)</div></div>
+            <div class="metric-box"><div class="metric-value">{seq_comp.type_fractions.get("negative", 0):.0%}</div><div class="metric-label">Negative (-)</div></div>"""}
         </div>
         <div class="figure"><img src="data:image/png;base64,{images_b64["aa_composition"]}" alt="AA Composition"><div class="figure-caption">Amino acid composition by residue type</div></div>
         <h3>Sequence</h3><div class="sequence">{self.structure.sequence}</div>
@@ -1410,15 +1449,15 @@ class StructureCharacterizer:
         <div class="figure"><img src="data:image/png;base64,{images_b64["contact_order"]}" alt="Contact Order"><div class="figure-caption">Contact order distribution</div></div>
         <div class="figure"><img src="data:image/png;base64,{images_b64["residue_contacts"]}" alt="Residue Contacts"><div class="figure-caption">Contacts per residue</div></div>
     </div>
-    <div class="section" id="secondary"><h2>Secondary Structure</h2>
+    {"" if self.structure.is_nucleic_acid else f"""<div class="section" id="secondary"><h2>Secondary Structure</h2>
         <div class="metrics-grid">
             <div class="metric-box"><div class="metric-value">{ss_analysis.helix_fraction:.1%}</div><div class="metric-label">Helix ({ss_analysis.helix_count} res)</div></div>
             <div class="metric-box"><div class="metric-value">{ss_analysis.sheet_fraction:.1%}</div><div class="metric-label">Sheet ({ss_analysis.sheet_count} res)</div></div>
             <div class="metric-box"><div class="metric-value">{ss_analysis.coil_fraction:.1%}</div><div class="metric-label">Coil ({ss_analysis.coil_count} res)</div></div>
         </div>
-        <div class="figure"><img src="data:image/png;base64,{images_b64["ss_composition"]}" alt="SS Composition"><div class="figure-caption">Secondary structure composition</div></div>
-        <div class="figure"><img src="data:image/png;base64,{images_b64["ss_profile"]}" alt="SS Profile"><div class="figure-caption">Secondary structure profile</div></div>
-    </div>
+        <div class="figure"><img src="data:image/png;base64,{images_b64['ss_composition']}" alt="SS Composition"><div class="figure-caption">Secondary structure composition</div></div>
+        <div class="figure"><img src="data:image/png;base64,{images_b64['ss_profile']}" alt="SS Profile"><div class="figure-caption">Secondary structure profile</div></div>
+    </div>"""}
 
     {self._build_pae_html_section(pae_analysis, images_b64)}
 
