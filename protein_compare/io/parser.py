@@ -450,9 +450,8 @@ class StructureLoader:
         if not path.exists():
             raise FileNotFoundError(f"Structure file not found: {path}")
 
-        # Prefer mmCIF over PDB when both exist — PDB fixed-column format
-        # can't represent 4-char residue names (e.g. LIG1 from Boltz SMILES
-        # ligands), causing BioPython parse failures.
+        # Prefer mmCIF over PDB when both exist — Boltz PDB output has
+        # corrupted ligand lines that crash BioPython (upstream #298, #630).
         if path.suffix.lower() in (".pdb", ".ent"):
             cif_path = path.with_suffix(".cif")
             if cif_path.is_file():
