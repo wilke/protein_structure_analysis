@@ -308,6 +308,8 @@ class StructureCharacterizer:
         chai_scores_path: Optional[str] = None,
         msa_depth: Optional[MSADepth] = None,
         msa_path: Optional[str] = None,
+        metadata: Optional[dict] = None,
+        metadata_path: Optional[str] = None,
     ):
         """Initialize the characterizer.
 
@@ -322,6 +324,8 @@ class StructureCharacterizer:
             chai_scores_path: Optional path to Chai scores NPZ file.
             msa_depth: Optional MSADepth object for MSA depth visualization.
             msa_path: Optional path to MSA parquet file.
+            metadata: Optional dict of run metadata (from metadata.json).
+            metadata_path: Optional path to metadata.json file.
         """
         self.structure = structure
         self.contact_cutoff = contact_cutoff
@@ -386,6 +390,17 @@ class StructureCharacterizer:
                 self.msa_depth = None
         else:
             self.msa_depth = None
+
+        # Handle run metadata (provenance)
+        if metadata is not None:
+            self.metadata = metadata
+        elif metadata_path is not None:
+            import json as _json
+            self.metadata = _json.loads(Path(metadata_path).read_text())
+        elif self.is_predicted and structure.source_path:
+            self.metadata = self._find_and_load_metadata(structure.source_path)
+        else:
+            self.metadata = None
 
         self.confidence_analyzer = ConfidenceAnalyzer()
         self.contact_analyzer = ContactMapAnalyzer(cutoff=contact_cutoff)
@@ -531,6 +546,26 @@ class StructureCharacterizer:
     def has_msa_depth(self) -> bool:
         """Check if MSA depth data is available."""
         return self.msa_depth is not None
+
+    @property
+    def has_metadata(self) -> bool:
+        return self.metadata is not None
+
+    @staticmethod
+    def _find_and_load_metadata(structure_path: Path) -> Optional[dict]:
+        import json as _json
+        parent = structure_path.parent
+        candidates = [
+            parent / "metadata" / "metadata.json",
+            parent.parent / "metadata" / "metadata.json",
+        ]
+        for p in candidates:
+            if p.is_file():
+                try:
+                    return _json.loads(p.read_text())
+                except Exception:
+                    return None
+        return None
 
     def _find_chai_scores_file(self, structure_path: Path) -> Optional[Path]:
         """Try to find Chai scores file in same directory as structure.
@@ -1465,6 +1500,8 @@ class StructureCharacterizer:
 
     {self._build_msa_html_section(images_b64)}
 
+    {self._build_provenance_html_section()}
+
     <div class="section" id="glossary">
         <h2>Glossary of Terms</h2>
         <div class="glossary-grid">
@@ -1688,6 +1725,104 @@ class StructureCharacterizer:
         </div>
         <div class="figure"><img src="data:image/png;base64,{images_b64["msa_depth"]}" alt="MSA Depth"><div class="figure-caption">MSA depth per residue position</div></div>
         <p style="color: #555; font-style: italic; margin-top: 15px;">{quality}</p>
+    </div>
+'''
+
+    def _build_provenance_html_section(self) -> str:
+        if not self.has_metadata:
+            return ""
+
+        m = self.metadata
+        tool = m.get("tool", "unknown")
+        requested = m.get("requested_tool", tool)
+        version = m.get("version", "")
+        tool_version = m.get("tool_version", "")
+        status = m.get("status", "")
+        runtime = m.get("runtime_seconds")
+        started = m.get("started_at", "")
+        completed = m.get("completed_at", "")
+        container = m.get("container_image", "")
+        backend = m.get("backend", "")
+        params = m.get("params", {})
+        inputs = m.get("inputs", [])
+
+        tool_display = tool.replace("-", " ").title()
+        if requested and requested != tool:
+            tool_display += f' <span style="color:#888;">(requested: {requested})</span>'
+
+        runtime_display = ""
+        if runtime is not None:
+            mins, secs = divmod(int(runtime), 60)
+            hrs, mins = divmod(mins, 60)
+            if hrs:
+                runtime_display = f"{hrs}h {mins}m {secs}s"
+            elif mins:
+                runtime_display = f"{mins}m {secs}s"
+            else:
+                runtime_display = f"{secs}s"
+
+        rows = []
+        rows.append(f'<tr><td style="font-weight:600;white-space:nowrap;">Tool</td><td>{tool_display}</td></tr>')
+        if version:
+            rows.append(f'<tr><td style="font-weight:600;white-space:nowrap;">predict-structure</td><td>v{version}</td></tr>')
+        if tool_version:
+            rows.append(f'<tr><td style="font-weight:600;white-space:nowrap;">Tool version</td><td>{tool_version}</td></tr>')
+        if status:
+            badge_color = "#2ecc71" if status == "success" else "#e67e22"
+            rows.append(f'<tr><td style="font-weight:600;white-space:nowrap;">Status</td><td><span style="background:{badge_color};color:#fff;padding:2px 8px;border-radius:4px;font-size:0.85em;">{status}</span></td></tr>')
+        if runtime_display:
+            rows.append(f'<tr><td style="font-weight:600;white-space:nowrap;">Runtime</td><td>{runtime_display}</td></tr>')
+        if started:
+            rows.append(f'<tr><td style="font-weight:600;white-space:nowrap;">Started</td><td>{started}</td></tr>')
+        if completed:
+            rows.append(f'<tr><td style="font-weight:600;white-space:nowrap;">Completed</td><td>{completed}</td></tr>')
+        if backend:
+            rows.append(f'<tr><td style="font-weight:600;white-space:nowrap;">Backend</td><td>{backend}</td></tr>')
+        if container:
+            rows.append(f'<tr><td style="font-weight:600;white-space:nowrap;">Container</td><td style="word-break:break-all;font-family:monospace;font-size:0.9em;">{container}</td></tr>')
+
+        # Parameters
+        params_html = ""
+        if params:
+            from html import escape
+            param_rows = []
+            for k, v in sorted(params.items()):
+                if v is None:
+                    continue
+                param_rows.append(f'<tr><td style="font-family:monospace;padding:2px 8px;">{escape(str(k))}</td><td style="padding:2px 8px;">{escape(str(v))}</td></tr>')
+            if param_rows:
+                params_html = f'''
+        <details style="margin-top:12px;">
+            <summary style="cursor:pointer;font-weight:600;color:#555;">Parameters</summary>
+            <table style="margin-top:8px;border-collapse:collapse;width:100%;">{"".join(param_rows)}</table>
+        </details>'''
+
+        # Inputs
+        inputs_html = ""
+        if inputs:
+            from html import escape
+            input_items = []
+            for inp in inputs:
+                name = inp.get("original_name", inp.get("filename", ""))
+                role = inp.get("role", "")
+                label = f"<b>{escape(name)}</b>" if name else ""
+                if role:
+                    label += f' <span style="color:#888;">({escape(role)})</span>'
+                if label:
+                    input_items.append(f"<li>{label}</li>")
+            if input_items:
+                inputs_html = f'''
+        <details style="margin-top:8px;">
+            <summary style="cursor:pointer;font-weight:600;color:#555;">Inputs</summary>
+            <ul style="margin-top:8px;">{"".join(input_items)}</ul>
+        </details>'''
+
+        return f'''
+    <div class="section" id="provenance"><h2>Job Provenance</h2>
+        <p style="color: #666; margin-bottom: 15px;">Run metadata from the prediction pipeline, recording the tool, parameters, and inputs used.</p>
+        <table style="border-collapse:collapse;width:100%;">{"".join(rows)}</table>
+        {params_html}
+        {inputs_html}
     </div>
 '''
 
