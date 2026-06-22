@@ -462,7 +462,9 @@ def report(results_csv, output, fmt, min_tm, max_rmsd):
               help="Path to Chai scores NPZ file (scores.model_idx_*.npz)")
 @click.option("--msa", "msa_path", type=click.Path(exists=True), default=None,
               help="Path to MSA parquet file (Chai .aligned.pqt, requires pyarrow)")
-def characterize(structure, output, fmt, contact_cutoff, dpi, is_experimental, is_predicted, pae_path, chai_scores_path, msa_path):
+@click.option("--metadata", "metadata_path", type=click.Path(exists=True), default=None,
+              help="Path to metadata.json from predict-structure (job provenance)")
+def characterize(structure, output, fmt, contact_cutoff, dpi, is_experimental, is_predicted, pae_path, chai_scores_path, msa_path, metadata_path):
     """Generate comprehensive characterization report for a structure.
 
     Analyzes confidence scores, contacts, secondary structure, and
@@ -493,6 +495,8 @@ def characterize(structure, output, fmt, contact_cutoff, dpi, is_experimental, i
         protein_compare characterize chai.cif --chai-scores scores.model_idx_0.npz
 
         protein_compare characterize chai.cif --chai-scores scores.npz --msa msas/seq.aligned.pqt
+
+        protein_compare characterize model_1.pdb --metadata metadata/metadata.json
     """
     click.echo("Loading structure...")
 
@@ -523,6 +527,7 @@ def characterize(structure, output, fmt, contact_cutoff, dpi, is_experimental, i
         pae_path=pae_path,
         chai_scores_path=chai_scores_path,
         msa_path=msa_path,
+        metadata_path=metadata_path,
     )
 
     # Show structure info with appropriate terminology
@@ -542,6 +547,8 @@ def characterize(structure, output, fmt, contact_cutoff, dpi, is_experimental, i
         if characterizer.has_msa_depth:
             msa = characterizer.msa_depth
             click.echo(f"  MSA depth loaded: mean={msa.mean_depth:.0f}, max={msa.max_depth}")
+        if characterizer.has_metadata:
+            click.echo(f"  Metadata loaded: tool={characterizer.metadata.get('tool', '?')}, status={characterizer.metadata.get('status', '?')}")
     else:
         click.echo(f"  {struct.name}: {struct.n_residues} residues, mean B-factor: {struct.mean_plddt:.1f} Ų")
         click.echo(f"  Structure type: Experimental (B-factor flexibility)")
