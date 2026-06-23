@@ -1577,7 +1577,12 @@ class StructureCharacterizer:
         let viewer = null;
         let spinning = false;
         let currentStyle = 'cartoon';
-        let currentColor = 'ss';
+        // Default to 'spectrum' (rainbow N->C), not 'ss'. Predicted PDBs
+        // (Boltz/Chai/AF/ESMFold) usually lack HELIX/SHEET records, so an SS
+        // colorscheme renders the whole backbone as coil in a single flat color
+        // on load. 'spectrum' keeps the initial cartoon informative; the
+        // "Color by SS" button still applies ssPyMOL for files that carry SS.
+        let currentColor = 'spectrum';
 
         const structureData = `{structure_escaped}`;
         const structureFormat = '{structure_format}';
