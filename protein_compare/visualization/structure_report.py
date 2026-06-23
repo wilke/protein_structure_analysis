@@ -175,6 +175,22 @@ GLOSSARY = {
         "term": "Ångström (Å)",
         "definition": "Unit of length equal to 10⁻¹⁰ meters (0.1 nanometers). Standard unit for atomic distances. A typical C-C bond is ~1.5Å; contact distance cutoff is typically 8Å.",
     },
+    "Viewer: Rainbow": {
+        "term": "3D viewer — Rainbow coloring",
+        "definition": "Colors the backbone as a spectrum from the N-terminus (blue) to the C-terminus (red). Highlights chain direction and how the polypeptide threads through the 3D fold. This is the default coloring and works for any structure.",
+    },
+    "Viewer: Secondary Structure": {
+        "term": "3D viewer — Color by secondary structure",
+        "definition": "Gives α-helices, β-sheets/strands, and coil/loop regions distinct colors, highlighting the fold's structural elements. Relies on HELIX/SHEET records in the file; predicted models (Boltz, Chai, AlphaFold, ESMFold) often omit them, in which case everything appears as coil — use Rainbow or pLDDT instead.",
+    },
+    "Viewer: Confidence": {
+        "term": "3D viewer — Color by pLDDT / B-factor",
+        "definition": "Colors each residue by the value in the B-factor column on a blue→red scale. For predicted structures this is pLDDT confidence (blue = high, red = low), highlighting reliable vs. uncertain regions. For experimental structures it is the B-factor, highlighting ordered vs. flexible regions.",
+    },
+    "Viewer: Chain": {
+        "term": "3D viewer — Color by chain",
+        "definition": "Assigns a distinct color to each chain, highlighting separate subunits in a complex or multimer. A single-chain structure appears in one uniform color.",
+    },
 }
 
 
@@ -1403,6 +1419,7 @@ class StructureCharacterizer:
             dist_caption = "Distribution of pLDDT confidence scores"
             profile_caption = "Per-residue pLDDT profile"
             color_btn_label = "pLDDT"
+            color_btn_tooltip = "Color each residue by pLDDT confidence (0-100): blue = high confidence, red = low. Highlights which parts of the prediction are reliable."
         else:
             score_name = "B-factor"
             score_unit = " Ų"
@@ -1422,6 +1439,7 @@ class StructureCharacterizer:
             dist_caption = "Distribution of B-factor (atomic displacement) values"
             profile_caption = "Per-residue B-factor profile"
             color_btn_label = "B-factor"
+            color_btn_tooltip = "Color each residue by B-factor (atomic displacement): blue = low/ordered, red = high/flexible. Highlights rigid vs. mobile regions."
 
         # PAE summary metric boxes, shown alongside pLDDT/B-factor when PAE
         # data is present. Lower mean PAE indicates more confident relative
@@ -1500,26 +1518,26 @@ class StructureCharacterizer:
             <div class="control-group">
                 <div class="control-group-label">Representation</div>
                 <div class="control-group-buttons">
-                    <button onclick="setStyle('cartoon')" id="btn-cartoon" class="active">Cartoon</button>
-                    <button onclick="setStyle('stick')" id="btn-stick">Sticks</button>
-                    <button onclick="setStyle('sphere')" id="btn-sphere">Spheres</button>
-                    <button onclick="setStyle('line')" id="btn-line">Lines</button>
+                    <button onclick="setStyle('cartoon')" id="btn-cartoon" class="active" title="Cartoon/ribbon trace of the backbone; best for seeing overall fold and secondary structure.">Cartoon</button>
+                    <button onclick="setStyle('stick')" id="btn-stick" title="Show every atom as a stick; best for side chains and small molecules.">Sticks</button>
+                    <button onclick="setStyle('sphere')" id="btn-sphere" title="Space-filling spheres (van der Waals radii); shows molecular volume and packing.">Spheres</button>
+                    <button onclick="setStyle('line')" id="btn-line" title="Thin wireframe lines; a lightweight all-atom view.">Lines</button>
                 </div>
             </div>
             <div class="control-group">
                 <div class="control-group-label">Color</div>
                 <div class="control-group-buttons">
-                    <button onclick="colorBy('spectrum')" id="btn-spectrum" class="active">Rainbow</button>
-                    <button onclick="colorBy('ss')" id="btn-ss">Secondary structure</button>
-                    <button onclick="colorBy('bfactor')" id="btn-bfactor">{color_btn_label}</button>
-                    <button onclick="colorBy('chain')" id="btn-chain">Chain</button>
+                    <button onclick="colorBy('spectrum')" id="btn-spectrum" class="active" title="Rainbow from N-terminus (blue) to C-terminus (red). Highlights chain direction and how the sequence threads through the fold.">Rainbow</button>
+                    <button onclick="colorBy('ss')" id="btn-ss" title="Color by secondary structure: helices, sheets/strands, and coil get distinct colors. Highlights fold elements. (Needs HELIX/SHEET records; predicted PDBs often lack them.)">Secondary structure</button>
+                    <button onclick="colorBy('bfactor')" id="btn-bfactor" title="{color_btn_tooltip}">{color_btn_label}</button>
+                    <button onclick="colorBy('chain')" id="btn-chain" title="Give each chain its own color. Highlights subunits in a complex; a single-chain structure shows one color.">Chain</button>
                 </div>
             </div>
             <div class="control-group actions">
                 <div class="control-group-label">View</div>
                 <div class="control-group-buttons">
-                    <button onclick="toggleSpin()" id="btn-spin">Spin</button>
-                    <button onclick="resetView()" id="btn-reset">Reset view</button>
+                    <button onclick="toggleSpin()" id="btn-spin" title="Toggle continuous rotation.">Spin</button>
+                    <button onclick="resetView()" id="btn-reset" title="Re-center and reset zoom (keeps the current representation and color).">Reset view</button>
                 </div>
             </div>
         </div>
