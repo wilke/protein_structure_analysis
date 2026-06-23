@@ -177,7 +177,7 @@ GLOSSARY = {
     },
     "Viewer: Rainbow": {
         "term": "3D viewer — Rainbow coloring",
-        "definition": "Colors the backbone as a spectrum from the N-terminus (blue) to the C-terminus (red). Highlights chain direction and how the polypeptide threads through the 3D fold. This is the default coloring and works for any structure.",
+        "definition": "Colors the backbone as a spectrum from the N-terminus (blue) to the C-terminus (red). Highlights chain direction and how the polypeptide threads through the 3D fold. Works for any structure.",
     },
     "Viewer: Secondary Structure": {
         "term": "3D viewer — Color by secondary structure",
@@ -185,7 +185,7 @@ GLOSSARY = {
     },
     "Viewer: Confidence": {
         "term": "3D viewer — Color by pLDDT / B-factor",
-        "definition": "Colors each residue by the value in the B-factor column on a blue→red scale. For predicted structures this is pLDDT confidence (blue = high, red = low), highlighting reliable vs. uncertain regions. For experimental structures it is the B-factor, highlighting ordered vs. flexible regions.",
+        "definition": "Colors each residue by the value in the B-factor column on a blue→red scale. For predicted structures this is pLDDT confidence (blue = high, red = low), highlighting reliable vs. uncertain regions. For experimental structures it is the B-factor, highlighting ordered vs. flexible regions. This is the default coloring.",
     },
     "Viewer: Chain": {
         "term": "3D viewer — Color by chain",
@@ -1548,9 +1548,9 @@ class StructureCharacterizer:
             <div class="control-group">
                 <div class="control-group-label">Color</div>
                 <div class="control-group-buttons">
-                    <button onclick="colorBy('spectrum')" id="btn-spectrum" class="active" title="Rainbow from N-terminus (blue) to C-terminus (red). Highlights chain direction and how the sequence threads through the fold.">Rainbow</button>
+                    <button onclick="colorBy('spectrum')" id="btn-spectrum" title="Rainbow from N-terminus (blue) to C-terminus (red). Highlights chain direction and how the sequence threads through the fold.">Rainbow</button>
                     <button onclick="colorBy('ss')" id="btn-ss" title="Color by secondary structure: helices, sheets/strands, and coil get distinct colors. Highlights fold elements. (Needs HELIX/SHEET records; predicted PDBs often lack them.)">Secondary structure</button>
-                    <button onclick="colorBy('bfactor')" id="btn-bfactor" title="{color_btn_tooltip}">{color_btn_label}</button>
+                    <button onclick="colorBy('bfactor')" id="btn-bfactor" class="active" title="{color_btn_tooltip}">{color_btn_label}</button>
                     <button onclick="colorBy('chain')" id="btn-chain" title="Give each chain its own color. Highlights subunits in a complex; a single-chain structure shows one color.">Chain</button>
                 </div>
             </div>
@@ -1638,12 +1638,13 @@ class StructureCharacterizer:
         let viewer = null;
         let spinning = false;
         let currentStyle = 'cartoon';
-        // Default to 'spectrum' (rainbow N->C), not 'ss'. Predicted PDBs
-        // (Boltz/Chai/AF/ESMFold) usually lack HELIX/SHEET records, so an SS
-        // colorscheme renders the whole backbone as coil in a single flat color
-        // on load. 'spectrum' keeps the initial cartoon informative; the
-        // "Color by SS" button still applies ssPyMOL for files that carry SS.
-        let currentColor = 'spectrum';
+        // Default to 'bfactor' (pLDDT confidence for predicted models, B-factor
+        // for experimental), the most informative default for a single chain.
+        // NOTE: not 'ss' - predicted PDBs (Boltz/Chai/AF/ESMFold) usually lack
+        // HELIX/SHEET records, so an SS colorscheme renders the whole backbone as
+        // coil in one flat color. 'Rainbow' and 'Secondary structure' remain
+        // available as buttons.
+        let currentColor = 'bfactor';
 
         const structureData = `{structure_escaped}`;
         const structureFormat = '{structure_format}';
