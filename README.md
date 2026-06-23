@@ -32,6 +32,6 @@ python -m protein_compare contacts structure.pdb -o contacts.png
 
 ## Requirements
 
-- Python >= 3.10
+- Python >= 3.12
 - biopython, tmtools, numpy, scipy, pandas, matplotlib, click, joblib
 - DSSP binary (mkdssp) for secondary structure analysis

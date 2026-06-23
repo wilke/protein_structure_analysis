@@ -102,4 +102,4 @@ Note: The default `monomer` preset does NOT generate PAE data. Use `monomer_ptm`
 
 ## Dependencies
 
-Requires Python ≥3.10. Key packages: biopython, tmtools, numpy, scipy, pandas, matplotlib, click, joblib. External: DSSP binary (mkdssp) for secondary structure analysis.
+Requires Python ≥3.12 (the codebase uses PEP 701 nested f-strings). Key packages: biopython, tmtools, numpy, scipy, pandas, matplotlib, click, joblib. External: DSSP binary (mkdssp) for secondary structure analysis.
