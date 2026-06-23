@@ -1209,6 +1209,15 @@ class StructureCharacterizer:
         # PAE analysis (optional)
         if pae_analysis is not None:
             analysis["pae"] = pae_analysis.to_dict(include_matrix=include_per_residue)
+            # Mirror a slim PAE summary next to the pLDDT confidence metrics so
+            # the score is machine-readable alongside confidence (matrix stays
+            # under the "pae" key; this is scalars only, no duplication).
+            pae_summary = {"mean_pae": round(pae_analysis.mean_pae, 2)}
+            if pae_analysis.pae_data.ptm is not None:
+                pae_summary["ptm"] = round(pae_analysis.pae_data.ptm, 4)
+            if pae_analysis.pae_data.iptm is not None:
+                pae_summary["iptm"] = round(pae_analysis.pae_data.iptm, 4)
+            analysis["confidence"]["pae_summary"] = pae_summary
 
         # Chai scores (optional)
         if self.has_chai_scores:
@@ -1383,6 +1392,28 @@ class StructureCharacterizer:
             profile_caption = "Per-residue B-factor profile"
             color_btn_label = "Color by B-factor"
 
+        # PAE summary metric boxes, shown alongside pLDDT/B-factor when PAE
+        # data is present. Lower mean PAE indicates more confident relative
+        # positioning; pTM/ipTM are global/interface confidence scores.
+        pae_summary_boxes = ""
+        if pae_analysis is not None:
+            pae_summary_boxes = (
+                f'<div class="metric-box"><div class="metric-value">{pae_analysis.mean_pae:.1f} Å</div>'
+                f'<div class="metric-label">Mean PAE</div></div>'
+            )
+            ptm = pae_analysis.pae_data.ptm
+            iptm = pae_analysis.pae_data.iptm
+            if ptm is not None:
+                pae_summary_boxes += (
+                    f'<div class="metric-box"><div class="metric-value">{ptm:.2f}</div>'
+                    f'<div class="metric-label">pTM</div></div>'
+                )
+            if iptm is not None:
+                pae_summary_boxes += (
+                    f'<div class="metric-box"><div class="metric-value">{iptm:.2f}</div>'
+                    f'<div class="metric-label">ipTM</div></div>'
+                )
+
         return f'''<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1469,6 +1500,7 @@ class StructureCharacterizer:
             <div class="metric-box"><div class="metric-value">{conf_stats.median:.1f}{score_unit}</div><div class="metric-label">{median_label}</div></div>
             <div class="metric-box"><div class="metric-value">{high_value}</div><div class="metric-label">{high_label}</div></div>
             <div class="metric-box"><div class="metric-value">{low_value}</div><div class="metric-label">{low_label}</div></div>
+            {pae_summary_boxes}
         </div>
         <div class="figure"><img src="data:image/png;base64,{images_b64["plddt_distribution"]}" alt="{score_name} Distribution"><div class="figure-caption">{dist_caption}</div></div>
         <div class="figure"><img src="data:image/png;base64,{images_b64["plddt_profile"]}" alt="{score_name} Profile"><div class="figure-caption">{profile_caption}</div></div>
