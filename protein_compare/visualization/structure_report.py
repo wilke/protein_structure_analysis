@@ -1402,7 +1402,7 @@ class StructureCharacterizer:
             summary_quality_value = f"{conf_stats.frac_confident:.0%}"
             dist_caption = "Distribution of pLDDT confidence scores"
             profile_caption = "Per-residue pLDDT profile"
-            color_btn_label = "Color by pLDDT"
+            color_btn_label = "pLDDT"
         else:
             score_name = "B-factor"
             score_unit = " Ų"
@@ -1421,7 +1421,7 @@ class StructureCharacterizer:
             summary_quality_value = f"{ordered_frac:.0%}"
             dist_caption = "Distribution of B-factor (atomic displacement) values"
             profile_caption = "Per-residue B-factor profile"
-            color_btn_label = "Color by B-factor"
+            color_btn_label = "B-factor"
 
         # PAE summary metric boxes, shown alongside pLDDT/B-factor when PAE
         # data is present. Lower mean PAE indicates more confident relative
@@ -1474,11 +1474,17 @@ class StructureCharacterizer:
         .glossary-def {{ font-size: 13px; color: #555; line-height: 1.5; }}
         #viewer-container {{ width: 100%; height: 500px; position: relative; border-radius: 8px; overflow: hidden; }}
         #viewer {{ width: 100%; height: 100%; }}
-        .viewer-controls {{ display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; justify-content: center; }}
-        .viewer-controls button {{ padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; transition: background 0.2s; }}
-        .viewer-controls button {{ background: #3498db; color: white; }}
+        .viewer-controls {{ display: flex; gap: 28px; margin-top: 12px; flex-wrap: wrap; justify-content: center; align-items: flex-end; }}
+        .control-group {{ display: flex; flex-direction: column; gap: 5px; }}
+        .control-group-label {{ font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: #95a5a6; font-weight: 700; text-align: center; }}
+        .control-group-buttons {{ display: flex; gap: 6px; }}
+        .control-group + .control-group {{ border-left: 1px solid #e1e4e8; padding-left: 28px; margin-left: -16px; }}
+        .viewer-controls button {{ padding: 8px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; transition: background 0.2s; background: #3498db; color: white; }}
         .viewer-controls button:hover {{ background: #2980b9; }}
         .viewer-controls button.active {{ background: #2c3e50; }}
+        .control-group.actions button {{ background: #7f8c8d; }}
+        .control-group.actions button:hover {{ background: #636e72; }}
+        .control-group.actions button.active {{ background: #16a085; }}
     </style>
 </head>
 <body>
@@ -1491,15 +1497,31 @@ class StructureCharacterizer:
             <div id="viewer"></div>
         </div>
         <div class="viewer-controls">
-            <button onclick="setStyle('cartoon')" id="btn-cartoon" class="active">Cartoon</button>
-            <button onclick="setStyle('stick')" id="btn-stick">Sticks</button>
-            <button onclick="setStyle('sphere')" id="btn-sphere">Spheres</button>
-            <button onclick="setStyle('line')" id="btn-line">Lines</button>
-            <button onclick="colorBy('ss')" id="btn-ss">Color by SS</button>
-            <button onclick="colorBy('bfactor')" id="btn-bfactor">{color_btn_label}</button>
-            <button onclick="colorBy('chain')" id="btn-chain">Color by Chain</button>
-            <button onclick="viewer.spin(spinning = !spinning)" id="btn-spin">Spin</button>
-            <button onclick="viewer.zoomTo(); viewer.render();">Reset View</button>
+            <div class="control-group">
+                <div class="control-group-label">Representation</div>
+                <div class="control-group-buttons">
+                    <button onclick="setStyle('cartoon')" id="btn-cartoon" class="active">Cartoon</button>
+                    <button onclick="setStyle('stick')" id="btn-stick">Sticks</button>
+                    <button onclick="setStyle('sphere')" id="btn-sphere">Spheres</button>
+                    <button onclick="setStyle('line')" id="btn-line">Lines</button>
+                </div>
+            </div>
+            <div class="control-group">
+                <div class="control-group-label">Color</div>
+                <div class="control-group-buttons">
+                    <button onclick="colorBy('spectrum')" id="btn-spectrum" class="active">Rainbow</button>
+                    <button onclick="colorBy('ss')" id="btn-ss">Secondary structure</button>
+                    <button onclick="colorBy('bfactor')" id="btn-bfactor">{color_btn_label}</button>
+                    <button onclick="colorBy('chain')" id="btn-chain">Chain</button>
+                </div>
+            </div>
+            <div class="control-group actions">
+                <div class="control-group-label">View</div>
+                <div class="control-group-buttons">
+                    <button onclick="toggleSpin()" id="btn-spin">Spin</button>
+                    <button onclick="resetView()" id="btn-reset">Reset view</button>
+                </div>
+            </div>
         </div>
         <div class="figure-caption">Interactive 3D viewer. Drag to rotate, scroll to zoom, right-click drag to translate.</div>
     </div>
@@ -1603,14 +1625,33 @@ class StructureCharacterizer:
 
         function setStyle(style) {{
             currentStyle = style;
-            document.querySelectorAll('.viewer-controls button').forEach(b => b.classList.remove('active'));
+            // Only toggle 'active' within the Representation group.
+            ['btn-cartoon','btn-stick','btn-sphere','btn-line'].forEach(
+                id => document.getElementById(id).classList.remove('active'));
             document.getElementById('btn-' + style).classList.add('active');
             applyStyle();
         }}
 
         function colorBy(scheme) {{
             currentColor = scheme;
+            // Only toggle 'active' within the Color group.
+            const colorBtns = {{ spectrum: 'btn-spectrum', ss: 'btn-ss', bfactor: 'btn-bfactor', chain: 'btn-chain' }};
+            Object.values(colorBtns).forEach(id => document.getElementById(id).classList.remove('active'));
+            const active = document.getElementById(colorBtns[scheme]);
+            if (active) active.classList.add('active');
             applyStyle();
+        }}
+
+        function toggleSpin() {{
+            spinning = !spinning;
+            viewer.spin(spinning);
+            document.getElementById('btn-spin').classList.toggle('active', spinning);
+        }}
+
+        function resetView() {{
+            // Camera reset only; representation/color selections are preserved.
+            viewer.zoomTo();
+            viewer.render();
         }}
 
         function applyStyle() {{
@@ -1633,13 +1674,19 @@ class StructureCharacterizer:
                 styleSpec = {{ line: {{}} }};
             }}
 
-            if (currentColor === 'ss') {{
+            if (currentColor === 'spectrum') {{
+                // Rainbow N->C by residue. Cartoon already has color:'spectrum' from
+                // the base styleSpec above; apply it to the other representations too.
+                if (currentStyle !== 'cartoon') {{
+                    styleSpec[currentStyle].color = 'spectrum';
+                }}
+            }} else if (currentColor === 'ss') {{
                 if (currentStyle === 'cartoon') {{
                     // Color cartoon by secondary structure. 'ssPyMOL' maps helix/sheet/coil
                     // to distinct colors. NOTE: if the PDB lacks HELIX/SHEET records (common
                     // for predicted models), 3Dmol's inferred SS may be all-coil, so this can
-                    // still look uniform; the default (non-SS) cartoon uses 'spectrum' above
-                    // to keep the backbone informative in that case.
+                    // still look uniform; the default 'Rainbow' color keeps the backbone
+                    // informative in that case.
                     styleSpec.cartoon.color = undefined;
                     styleSpec.cartoon.colorscheme = 'ssPyMOL';
                 }} else {{
@@ -1654,8 +1701,11 @@ class StructureCharacterizer:
                     styleSpec[currentStyle].colorscheme = {{ prop: 'b', gradient: 'roygb', min: 0, max: 100 }};
                 }}
             }} else if (currentColor === 'chain') {{
+                // 'chain' is a colorscheme name, not a color value; assigning it to
+                // `color` makes 3Dmol fall back to black. Use `colorscheme` for all reps.
                 if (currentStyle === 'cartoon') {{
-                    styleSpec.cartoon.color = 'chain';
+                    styleSpec.cartoon.color = undefined;
+                    styleSpec.cartoon.colorscheme = 'chain';
                 }} else {{
                     styleSpec[currentStyle].colorscheme = 'chain';
                 }}
