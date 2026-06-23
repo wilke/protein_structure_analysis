@@ -175,6 +175,22 @@ GLOSSARY = {
         "term": "Ångström (Å)",
         "definition": "Unit of length equal to 10⁻¹⁰ meters (0.1 nanometers). Standard unit for atomic distances. A typical C-C bond is ~1.5Å; contact distance cutoff is typically 8Å.",
     },
+    "Viewer: Rainbow": {
+        "term": "3D viewer — Rainbow coloring",
+        "definition": "Colors the backbone as a spectrum from the N-terminus (blue) to the C-terminus (red). Highlights chain direction and how the polypeptide threads through the 3D fold. This is the default coloring and works for any structure.",
+    },
+    "Viewer: Secondary Structure": {
+        "term": "3D viewer — Color by secondary structure",
+        "definition": "Gives α-helices, β-sheets/strands, and coil/loop regions distinct colors, highlighting the fold's structural elements. Relies on HELIX/SHEET records in the file; predicted models (Boltz, Chai, AlphaFold, ESMFold) often omit them, in which case everything appears as coil — use Rainbow or pLDDT instead.",
+    },
+    "Viewer: Confidence": {
+        "term": "3D viewer — Color by pLDDT / B-factor",
+        "definition": "Colors each residue by the value in the B-factor column on a blue→red scale. For predicted structures this is pLDDT confidence (blue = high, red = low), highlighting reliable vs. uncertain regions. For experimental structures it is the B-factor, highlighting ordered vs. flexible regions.",
+    },
+    "Viewer: Chain": {
+        "term": "3D viewer — Color by chain",
+        "definition": "Assigns a distinct color to each chain, highlighting separate subunits in a complex or multimer. A single-chain structure appears in one uniform color.",
+    },
 }
 
 
@@ -1402,7 +1418,8 @@ class StructureCharacterizer:
             summary_quality_value = f"{conf_stats.frac_confident:.0%}"
             dist_caption = "Distribution of pLDDT confidence scores"
             profile_caption = "Per-residue pLDDT profile"
-            color_btn_label = "Color by pLDDT"
+            color_btn_label = "pLDDT"
+            color_btn_tooltip = "Color each residue by pLDDT confidence (0-100): blue = high confidence, red = low. Highlights which parts of the prediction are reliable."
         else:
             score_name = "B-factor"
             score_unit = " Ų"
@@ -1421,7 +1438,8 @@ class StructureCharacterizer:
             summary_quality_value = f"{ordered_frac:.0%}"
             dist_caption = "Distribution of B-factor (atomic displacement) values"
             profile_caption = "Per-residue B-factor profile"
-            color_btn_label = "Color by B-factor"
+            color_btn_label = "B-factor"
+            color_btn_tooltip = "Color each residue by B-factor (atomic displacement): blue = low/ordered, red = high/flexible. Highlights rigid vs. mobile regions."
 
         # PAE summary metric boxes, shown alongside pLDDT/B-factor when PAE
         # data is present. Lower mean PAE indicates more confident relative
@@ -1444,6 +1462,12 @@ class StructureCharacterizer:
                     f'<div class="metric-box"><div class="metric-value">{iptm:.2f}</div>'
                     f'<div class="metric-label">ipTM</div></div>'
                 )
+
+        try:
+            from importlib.metadata import version as _pkg_version
+            report_version = _pkg_version("protein_compare")
+        except Exception:
+            from protein_compare import __version__ as report_version
 
         return f'''<!DOCTYPE html>
 <html lang="en">
@@ -1474,11 +1498,17 @@ class StructureCharacterizer:
         .glossary-def {{ font-size: 13px; color: #555; line-height: 1.5; }}
         #viewer-container {{ width: 100%; height: 500px; position: relative; border-radius: 8px; overflow: hidden; }}
         #viewer {{ width: 100%; height: 100%; }}
-        .viewer-controls {{ display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; justify-content: center; }}
-        .viewer-controls button {{ padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; transition: background 0.2s; }}
-        .viewer-controls button {{ background: #3498db; color: white; }}
+        .viewer-controls {{ display: flex; gap: 28px; margin-top: 12px; flex-wrap: wrap; justify-content: center; align-items: flex-end; }}
+        .control-group {{ display: flex; flex-direction: column; gap: 5px; }}
+        .control-group-label {{ font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: #95a5a6; font-weight: 700; text-align: center; }}
+        .control-group-buttons {{ display: flex; gap: 6px; }}
+        .control-group + .control-group {{ border-left: 1px solid #e1e4e8; padding-left: 28px; margin-left: -16px; }}
+        .viewer-controls button {{ padding: 8px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; transition: background 0.2s; background: #3498db; color: white; }}
         .viewer-controls button:hover {{ background: #2980b9; }}
         .viewer-controls button.active {{ background: #2c3e50; }}
+        .control-group.actions button {{ background: #7f8c8d; }}
+        .control-group.actions button:hover {{ background: #636e72; }}
+        .control-group.actions button.active {{ background: #16a085; }}
     </style>
 </head>
 <body>
@@ -1491,15 +1521,31 @@ class StructureCharacterizer:
             <div id="viewer"></div>
         </div>
         <div class="viewer-controls">
-            <button onclick="setStyle('cartoon')" id="btn-cartoon" class="active">Cartoon</button>
-            <button onclick="setStyle('stick')" id="btn-stick">Sticks</button>
-            <button onclick="setStyle('sphere')" id="btn-sphere">Spheres</button>
-            <button onclick="setStyle('line')" id="btn-line">Lines</button>
-            <button onclick="colorBy('ss')" id="btn-ss">Color by SS</button>
-            <button onclick="colorBy('bfactor')" id="btn-bfactor">{color_btn_label}</button>
-            <button onclick="colorBy('chain')" id="btn-chain">Color by Chain</button>
-            <button onclick="viewer.spin(spinning = !spinning)" id="btn-spin">Spin</button>
-            <button onclick="viewer.zoomTo(); viewer.render();">Reset View</button>
+            <div class="control-group">
+                <div class="control-group-label">Representation</div>
+                <div class="control-group-buttons">
+                    <button onclick="setStyle('cartoon')" id="btn-cartoon" class="active" title="Cartoon/ribbon trace of the backbone; best for seeing overall fold and secondary structure.">Cartoon</button>
+                    <button onclick="setStyle('stick')" id="btn-stick" title="Show every atom as a stick; best for side chains and small molecules.">Sticks</button>
+                    <button onclick="setStyle('sphere')" id="btn-sphere" title="Space-filling spheres (van der Waals radii); shows molecular volume and packing.">Spheres</button>
+                    <button onclick="setStyle('line')" id="btn-line" title="Thin wireframe lines; a lightweight all-atom view.">Lines</button>
+                </div>
+            </div>
+            <div class="control-group">
+                <div class="control-group-label">Color</div>
+                <div class="control-group-buttons">
+                    <button onclick="colorBy('spectrum')" id="btn-spectrum" class="active" title="Rainbow from N-terminus (blue) to C-terminus (red). Highlights chain direction and how the sequence threads through the fold.">Rainbow</button>
+                    <button onclick="colorBy('ss')" id="btn-ss" title="Color by secondary structure: helices, sheets/strands, and coil get distinct colors. Highlights fold elements. (Needs HELIX/SHEET records; predicted PDBs often lack them.)">Secondary structure</button>
+                    <button onclick="colorBy('bfactor')" id="btn-bfactor" title="{color_btn_tooltip}">{color_btn_label}</button>
+                    <button onclick="colorBy('chain')" id="btn-chain" title="Give each chain its own color. Highlights subunits in a complex; a single-chain structure shows one color.">Chain</button>
+                </div>
+            </div>
+            <div class="control-group actions">
+                <div class="control-group-label">View</div>
+                <div class="control-group-buttons">
+                    <button onclick="toggleSpin()" id="btn-spin" title="Toggle continuous rotation.">Spin</button>
+                    <button onclick="resetView()" id="btn-reset" title="Re-center and reset zoom (keeps the current representation and color).">Reset view</button>
+                </div>
+            </div>
         </div>
         <div class="figure-caption">Interactive 3D viewer. Drag to rotate, scroll to zoom, right-click drag to translate.</div>
     </div>
@@ -1571,13 +1617,18 @@ class StructureCharacterizer:
             {self._build_glossary_html()}
         </div>
     </div>
-    <div class="footer">Generated by protein_compare v0.1.0</div>
+    <div class="footer">Generated by protein_compare v{report_version}</div>
 
     <script>
         let viewer = null;
         let spinning = false;
         let currentStyle = 'cartoon';
-        let currentColor = 'ss';
+        // Default to 'spectrum' (rainbow N->C), not 'ss'. Predicted PDBs
+        // (Boltz/Chai/AF/ESMFold) usually lack HELIX/SHEET records, so an SS
+        // colorscheme renders the whole backbone as coil in a single flat color
+        // on load. 'spectrum' keeps the initial cartoon informative; the
+        // "Color by SS" button still applies ssPyMOL for files that carry SS.
+        let currentColor = 'spectrum';
 
         const structureData = `{structure_escaped}`;
         const structureFormat = '{structure_format}';
@@ -1598,14 +1649,33 @@ class StructureCharacterizer:
 
         function setStyle(style) {{
             currentStyle = style;
-            document.querySelectorAll('.viewer-controls button').forEach(b => b.classList.remove('active'));
+            // Only toggle 'active' within the Representation group.
+            ['btn-cartoon','btn-stick','btn-sphere','btn-line'].forEach(
+                id => document.getElementById(id).classList.remove('active'));
             document.getElementById('btn-' + style).classList.add('active');
             applyStyle();
         }}
 
         function colorBy(scheme) {{
             currentColor = scheme;
+            // Only toggle 'active' within the Color group.
+            const colorBtns = {{ spectrum: 'btn-spectrum', ss: 'btn-ss', bfactor: 'btn-bfactor', chain: 'btn-chain' }};
+            Object.values(colorBtns).forEach(id => document.getElementById(id).classList.remove('active'));
+            const active = document.getElementById(colorBtns[scheme]);
+            if (active) active.classList.add('active');
             applyStyle();
+        }}
+
+        function toggleSpin() {{
+            spinning = !spinning;
+            viewer.spin(spinning);
+            document.getElementById('btn-spin').classList.toggle('active', spinning);
+        }}
+
+        function resetView() {{
+            // Camera reset only; representation/color selections are preserved.
+            viewer.zoomTo();
+            viewer.render();
         }}
 
         function applyStyle() {{
@@ -1628,13 +1698,19 @@ class StructureCharacterizer:
                 styleSpec = {{ line: {{}} }};
             }}
 
-            if (currentColor === 'ss') {{
+            if (currentColor === 'spectrum') {{
+                // Rainbow N->C by residue. Cartoon already has color:'spectrum' from
+                // the base styleSpec above; apply it to the other representations too.
+                if (currentStyle !== 'cartoon') {{
+                    styleSpec[currentStyle].color = 'spectrum';
+                }}
+            }} else if (currentColor === 'ss') {{
                 if (currentStyle === 'cartoon') {{
                     // Color cartoon by secondary structure. 'ssPyMOL' maps helix/sheet/coil
                     // to distinct colors. NOTE: if the PDB lacks HELIX/SHEET records (common
                     // for predicted models), 3Dmol's inferred SS may be all-coil, so this can
-                    // still look uniform; the default (non-SS) cartoon uses 'spectrum' above
-                    // to keep the backbone informative in that case.
+                    // still look uniform; the default 'Rainbow' color keeps the backbone
+                    // informative in that case.
                     styleSpec.cartoon.color = undefined;
                     styleSpec.cartoon.colorscheme = 'ssPyMOL';
                 }} else {{
@@ -1649,8 +1725,11 @@ class StructureCharacterizer:
                     styleSpec[currentStyle].colorscheme = {{ prop: 'b', gradient: 'roygb', min: 0, max: 100 }};
                 }}
             }} else if (currentColor === 'chain') {{
+                // 'chain' is a colorscheme name, not a color value; assigning it to
+                // `color` makes 3Dmol fall back to black. Use `colorscheme` for all reps.
                 if (currentStyle === 'cartoon') {{
-                    styleSpec.cartoon.color = 'chain';
+                    styleSpec.cartoon.color = undefined;
+                    styleSpec.cartoon.colorscheme = 'chain';
                 }} else {{
                     styleSpec[currentStyle].colorscheme = 'chain';
                 }}
