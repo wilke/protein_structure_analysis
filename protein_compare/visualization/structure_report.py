@@ -1244,6 +1244,37 @@ class StructureCharacterizer:
             if include_per_residue:
                 analysis["msa_depth"]["per_residue_depth"] = msa.depths.tolist()
 
+        # Prediction provenance (optional). The HTML report already renders the
+        # run metadata via _build_provenance_html_section(); here we mirror the
+        # same facts into the machine-readable JSON so programmatic consumers can
+        # read them too. Only present, non-null keys are emitted. (#39)
+        if self.has_metadata:
+            m = self.metadata
+            provenance = {
+                key: m[key]
+                for key in (
+                    "schema_version",
+                    "tool",
+                    "requested_tool",
+                    "version",
+                    "tool_version",
+                    "status",
+                    "started_at",
+                    "completed_at",
+                    "runtime_seconds",
+                    "backend",
+                    "container_image",
+                    "command",
+                    "params",
+                    "inputs",
+                    "msa_source",
+                    "msa",
+                )
+                if m.get(key) is not None
+            }
+            if provenance:
+                analysis["prediction_provenance"] = provenance
+
         with open(output_path, "w") as f:
             _json.dump(analysis, f, indent=2)
 
@@ -1800,7 +1831,11 @@ class StructureCharacterizer:
         inputs = m.get("inputs", [])
 
         tool_display = tool.replace("-", " ").title()
-        if requested and requested != tool:
+        if requested == "auto" and tool and tool != "auto":
+            # Surface which tool "auto" mode resolved to, rather than just
+            # showing "(requested: auto)". (#47)
+            tool_display = f'auto &rarr; {tool.replace("-", " ").title()}'
+        elif requested and requested != tool:
             tool_display += f' <span style="color:#888;">(requested: {requested})</span>'
 
         runtime_display = ""
