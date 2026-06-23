@@ -1583,6 +1583,11 @@ class StructureCharacterizer:
 
             let styleSpec = {{}};
             if (currentStyle === 'cartoon') {{
+                // Default cartoon coloring is 'spectrum' (rainbow N->C by residue).
+                // NOTE: predicted PDBs (Boltz/Chai/AF/ESMFold) usually lack HELIX/SHEET
+                // records, so 3Dmol cannot infer secondary structure from the file and
+                // would render the whole backbone as coil (uniformly dark) if colored
+                // by 'ss'. Spectrum keeps the backbone visually informative by default.
                 styleSpec = {{ cartoon: {{ color: 'spectrum' }} }};
             }} else if (currentStyle === 'stick') {{
                 styleSpec = {{ stick: {{ radius: 0.15 }} }};
@@ -1594,14 +1599,20 @@ class StructureCharacterizer:
 
             if (currentColor === 'ss') {{
                 if (currentStyle === 'cartoon') {{
-                    styleSpec.cartoon.color = 'ss';
+                    // Color cartoon by secondary structure. 'ssPyMOL' maps helix/sheet/coil
+                    // to distinct colors. NOTE: if the PDB lacks HELIX/SHEET records (common
+                    // for predicted models), 3Dmol's inferred SS may be all-coil, so this can
+                    // still look uniform; the default (non-SS) cartoon uses 'spectrum' above
+                    // to keep the backbone informative in that case.
+                    styleSpec.cartoon.color = undefined;
+                    styleSpec.cartoon.colorscheme = 'ssPyMOL';
                 }} else {{
                     styleSpec[currentStyle].colorscheme = 'ssJmol';
                 }}
             }} else if (currentColor === 'bfactor') {{
                 // Color by B-factor (pLDDT) - blue high, red low
                 if (currentStyle === 'cartoon') {{
-                    styleSpec.cartoon.color = 'b';
+                    styleSpec.cartoon.color = undefined;
                     styleSpec.cartoon.colorscheme = {{ prop: 'b', gradient: 'roygb', min: 0, max: 100 }};
                 }} else {{
                     styleSpec[currentStyle].colorscheme = {{ prop: 'b', gradient: 'roygb', min: 0, max: 100 }};
@@ -1615,6 +1626,16 @@ class StructureCharacterizer:
             }}
 
             viewer.setStyle({{}}, styleSpec);
+
+            // When the protein is shown as cartoon, ligands/hetero atoms have no cartoon
+            // backbone and would otherwise be invisible. Always render HETATM atoms as
+            // sticks on top of the cartoon so ligands stay visible. (For whole-structure
+            // stick/sphere/line views the global style already covers HETATM atoms.)
+            // 3Dmol selector: {{hetflag: true}} matches ATOM records flagged HETATM.
+            if (currentStyle === 'cartoon') {{
+                viewer.setStyle({{ hetflag: true }}, {{ stick: {{ radius: 0.2, colorscheme: 'default' }} }});
+            }}
+
             viewer.render();
         }}
     </script>
