@@ -42,6 +42,23 @@ class ConfidenceStats:
         """Check if structure is generally reliable (>70% confident residues)."""
         return self.frac_confident >= 0.7
 
+    def to_dict(self) -> dict:
+        """Serialize to JSON-safe dictionary."""
+        return {
+            "mean": round(self.mean, 2),
+            "median": round(self.median, 2),
+            "std": round(self.std, 2),
+            "min": round(self.min, 2),
+            "max": round(self.max, 2),
+            "n_very_high": self.n_very_high,
+            "n_confident": self.n_confident,
+            "n_low": self.n_low,
+            "n_very_low": self.n_very_low,
+            "frac_confident": round(self.frac_confident, 4),
+            "n_residues": self.n_residues,
+            "is_reliable": self.is_reliable,
+        }
+
 
 @dataclass
 class ConfidenceComparison:

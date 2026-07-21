@@ -5,8 +5,10 @@ generating HTML and PDF reports with embedded figures.
 """
 
 import base64
+import json as _json
 from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
@@ -173,6 +175,22 @@ GLOSSARY = {
         "term": "Ångström (Å)",
         "definition": "Unit of length equal to 10⁻¹⁰ meters (0.1 nanometers). Standard unit for atomic distances. A typical C-C bond is ~1.5Å; contact distance cutoff is typically 8Å.",
     },
+    "Viewer: Rainbow": {
+        "term": "3D viewer — Rainbow coloring",
+        "definition": "Colors the backbone as a spectrum from the N-terminus (blue) to the C-terminus (red). Highlights chain direction and how the polypeptide threads through the 3D fold. Works for any structure.",
+    },
+    "Viewer: Secondary Structure": {
+        "term": "3D viewer — Color by secondary structure",
+        "definition": "Gives α-helices, β-sheets/strands, and coil/loop regions distinct colors, highlighting the fold's structural elements. Relies on HELIX/SHEET records in the file; predicted models (Boltz, Chai, AlphaFold, ESMFold) often omit them, in which case everything appears as coil — use Rainbow or pLDDT instead.",
+    },
+    "Viewer: Confidence": {
+        "term": "3D viewer — Color by pLDDT / B-factor",
+        "definition": "Colors each residue by the value in the B-factor column on a blue→red scale. For predicted structures this is pLDDT confidence (blue = high, red = low), highlighting reliable vs. uncertain regions. For experimental structures it is the B-factor, highlighting ordered vs. flexible regions. This is the default coloring.",
+    },
+    "Viewer: Chain": {
+        "term": "3D viewer — Color by chain",
+        "definition": "Assigns a distinct color to each chain, highlighting separate subunits in a complex or multimer. A single-chain structure appears in one uniform color.",
+    },
 }
 
 
@@ -180,12 +198,24 @@ GLOSSARY = {
 class SequenceComposition:
     """Sequence composition analysis results."""
     length: int
-    aa_counts: dict
-    aa_fractions: dict
+    residue_counts: dict
+    residue_fractions: dict
     molecular_weight: float
     type_counts: dict
     type_fractions: dict
     chains: list
+
+    def to_dict(self) -> dict:
+        """Serialize to JSON-safe dictionary."""
+        return {
+            "length": self.length,
+            "residue_counts": self.residue_counts,
+            "residue_fractions": {k: round(v, 4) for k, v in self.residue_fractions.items()},
+            "molecular_weight": round(self.molecular_weight, 1),
+            "type_counts": self.type_counts,
+            "type_fractions": {k: round(v, 4) for k, v in self.type_fractions.items()},
+            "chains": self.chains,
+        }
 
 
 @dataclass
@@ -200,6 +230,25 @@ class ContactAnalysis:
     n_very_long_range: int
     contacts_per_residue: np.ndarray
 
+    def to_dict(self, include_matrices: bool = False) -> dict:
+        """Serialize to JSON-safe dictionary.
+
+        Args:
+            include_matrices: If True, include the full contact map and
+                per-residue arrays. These can be large for big structures.
+        """
+        d = {
+            "n_contacts": self.n_contacts,
+            "contact_density": round(self.contact_density, 4),
+            "n_short_range": self.n_short_range,
+            "n_medium_range": self.n_medium_range,
+            "n_long_range": self.n_long_range,
+            "n_very_long_range": self.n_very_long_range,
+        }
+        if include_matrices:
+            d["contacts_per_residue"] = self.contacts_per_residue.tolist()
+        return d
+
 
 @dataclass
 class SSAnalysis:
@@ -212,6 +261,18 @@ class SSAnalysis:
     sheet_count: int
     coil_count: int
 
+    def to_dict(self) -> dict:
+        """Serialize to JSON-safe dictionary."""
+        return {
+            "ss_sequence": "".join(self.ss_sequence),
+            "helix_fraction": round(self.helix_fraction, 4),
+            "sheet_fraction": round(self.sheet_fraction, 4),
+            "coil_fraction": round(self.coil_fraction, 4),
+            "helix_count": self.helix_count,
+            "sheet_count": self.sheet_count,
+            "coil_count": self.coil_count,
+        }
+
 
 @dataclass
 class PAEAnalysis:
@@ -223,6 +284,29 @@ class PAEAnalysis:
     n_domains: int
     inter_domain_pae: Optional[float]  # Mean PAE between domains
     intra_domain_pae: float  # Mean PAE within domains
+
+    def to_dict(self, include_matrix: bool = False) -> dict:
+        """Serialize to JSON-safe dictionary.
+
+        Args:
+            include_matrix: If True, include the full NxN PAE matrix.
+        """
+        d: dict = {
+            "mean_pae": round(self.mean_pae, 2),
+            "median_pae": round(self.median_pae, 2),
+            "n_domains": self.n_domains,
+            "domains": self.domains,
+            "intra_domain_pae": round(self.intra_domain_pae, 2),
+        }
+        if self.inter_domain_pae is not None:
+            d["inter_domain_pae"] = round(self.inter_domain_pae, 2)
+        if self.pae_data.ptm is not None:
+            d["ptm"] = round(self.pae_data.ptm, 4)
+        if self.pae_data.iptm is not None:
+            d["iptm"] = round(self.pae_data.iptm, 4)
+        if include_matrix:
+            d["pae_matrix"] = self.pae_data.pae_matrix.tolist()
+        return d
 
 
 class StructureCharacterizer:
@@ -240,6 +324,8 @@ class StructureCharacterizer:
         chai_scores_path: Optional[str] = None,
         msa_depth: Optional[MSADepth] = None,
         msa_path: Optional[str] = None,
+        metadata: Optional[dict] = None,
+        metadata_path: Optional[str] = None,
     ):
         """Initialize the characterizer.
 
@@ -254,6 +340,8 @@ class StructureCharacterizer:
             chai_scores_path: Optional path to Chai scores NPZ file.
             msa_depth: Optional MSADepth object for MSA depth visualization.
             msa_path: Optional path to MSA parquet file.
+            metadata: Optional dict of run metadata (from metadata.json).
+            metadata_path: Optional path to metadata.json file.
         """
         self.structure = structure
         self.contact_cutoff = contact_cutoff
@@ -319,6 +407,17 @@ class StructureCharacterizer:
         else:
             self.msa_depth = None
 
+        # Handle run metadata (provenance)
+        if metadata is not None:
+            self.metadata = metadata
+        elif metadata_path is not None:
+            import json as _json
+            self.metadata = _json.loads(Path(metadata_path).read_text())
+        elif self.is_predicted and structure.source_path:
+            self.metadata = self._find_and_load_metadata(structure.source_path)
+        else:
+            self.metadata = None
+
         self.confidence_analyzer = ConfidenceAnalyzer()
         self.contact_analyzer = ContactMapAnalyzer(cutoff=contact_cutoff)
         self.ss_analyzer = SecondaryStructureAnalyzer()
@@ -329,21 +428,35 @@ class StructureCharacterizer:
         self._pae_analysis: Optional[PAEAnalysis] = None
 
     def analyze_sequence_composition(self) -> SequenceComposition:
-        """Analyze amino acid composition."""
+        """Analyze sequence composition (amino acids or nucleotides)."""
         if self._seq_comp is not None:
             return self._seq_comp
         seq = self.structure.sequence
         length = len(seq)
-        aa_counts = dict(Counter(seq))
-        aa_fractions = {aa: c / length for aa, c in aa_counts.items()}
-        mw = sum(AA_PROPERTIES.get(aa, AA_PROPERTIES["X"])["mw"] for aa in seq) - 18.015 * (length - 1)
-        type_counts = {"hydrophobic": 0, "polar": 0, "positive": 0, "negative": 0, "special": 0}
-        for aa in seq:
-            t = AA_PROPERTIES.get(aa, AA_PROPERTIES["X"])["type"]
-            type_counts[t] = type_counts.get(t, 0) + 1
-        type_fractions = {t: c / length for t, c in type_counts.items()}
+        residue_counts = dict(Counter(seq))
+        residue_fractions = {aa: c / length for aa, c in residue_counts.items()}
         chains = list(set(rid[0] for rid in self.structure.residue_ids))
-        self._seq_comp = SequenceComposition(length, aa_counts, aa_fractions, mw, type_counts, type_fractions, chains)
+
+        if self.structure.is_nucleic_acid:
+            # Nucleic acid — skip molecular weight and residue type classification
+            mw = 0.0
+            type_counts = {"purine": 0, "pyrimidine": 0}
+            purines = set("AG")
+            for nt in seq:
+                if nt in purines:
+                    type_counts["purine"] += 1
+                else:
+                    type_counts["pyrimidine"] += 1
+            type_fractions = {t: c / length for t, c in type_counts.items()}
+        else:
+            mw = sum(AA_PROPERTIES.get(aa, AA_PROPERTIES["X"])["mw"] for aa in seq) - 18.015 * (length - 1)
+            type_counts = {"hydrophobic": 0, "polar": 0, "positive": 0, "negative": 0, "special": 0}
+            for aa in seq:
+                t = AA_PROPERTIES.get(aa, AA_PROPERTIES["X"])["type"]
+                type_counts[t] = type_counts.get(t, 0) + 1
+            type_fractions = {t: c / length for t, c in type_counts.items()}
+
+        self._seq_comp = SequenceComposition(length, residue_counts, residue_fractions, mw, type_counts, type_fractions, chains)
         return self._seq_comp
 
     def analyze_confidence(self) -> ConfidenceStats:
@@ -376,14 +489,18 @@ class StructureCharacterizer:
         return self._contact_analysis
 
     def analyze_secondary_structure(self) -> SSAnalysis:
-        """Analyze secondary structure."""
+        """Analyze secondary structure (protein only; NA returns all coil)."""
         if self._ss_analysis is not None:
             return self._ss_analysis
-        try:
-            ss_seq = self.ss_analyzer.assign_ss(self.structure, simplify=True)
-        except Exception:
-            ss_seq = ["C"] * self.structure.n_residues
-        n = len(ss_seq)
+        n = self.structure.n_residues
+        if self.structure.is_nucleic_acid:
+            # DSSP does not assign secondary structure for nucleic acids
+            ss_seq = ["C"] * n
+        else:
+            try:
+                ss_seq = self.ss_analyzer.assign_ss(self.structure, simplify=True)
+            except Exception:
+                ss_seq = ["C"] * n
         h, e, c = ss_seq.count("H"), ss_seq.count("E"), ss_seq.count("C")
         self._ss_analysis = SSAnalysis(ss_seq, h/n if n else 0, e/n if n else 0, c/n if n else 0, h, e, c)
         return self._ss_analysis
@@ -445,6 +562,26 @@ class StructureCharacterizer:
     def has_msa_depth(self) -> bool:
         """Check if MSA depth data is available."""
         return self.msa_depth is not None
+
+    @property
+    def has_metadata(self) -> bool:
+        return self.metadata is not None
+
+    @staticmethod
+    def _find_and_load_metadata(structure_path: Path) -> Optional[dict]:
+        import json as _json
+        parent = structure_path.parent
+        candidates = [
+            parent / "metadata" / "metadata.json",
+            parent.parent / "metadata" / "metadata.json",
+        ]
+        for p in candidates:
+            if p.is_file():
+                try:
+                    return _json.loads(p.read_text())
+                except Exception:
+                    return None
+        return None
 
     def _find_chai_scores_file(self, structure_path: Path) -> Optional[Path]:
         """Try to find Chai scores file in same directory as structure.
@@ -643,18 +780,33 @@ class StructureCharacterizer:
         return fig
 
     def plot_aa_composition(self) -> Figure:
-        """Plot amino acid composition."""
+        """Plot sequence composition (amino acids or nucleotides)."""
         fig, ax = plt.subplots(figsize=(12, 5))
         comp = self.analyze_sequence_composition()
-        aa_order = ["A","V","L","I","M","F","W","S","T","N","Q","Y","C","K","R","H","D","E","G","P"]
-        fracs = [comp.aa_fractions.get(aa, 0) * 100 for aa in aa_order]
-        colors = [AA_TYPE_COLORS[AA_PROPERTIES[aa]["type"]] for aa in aa_order]
-        ax.bar(aa_order, fracs, color=colors, edgecolor="white", linewidth=0.5)
-        ax.axhline(5, color="gray", linestyle="--", alpha=0.7, label="Expected (5%)")
-        ax.set_xlabel("Amino Acid"); ax.set_ylabel("Frequency (%)")
-        ax.set_title("Amino Acid Composition")
-        legend_patches = [mpatches.Patch(color=c, label=t.title()) for t, c in AA_TYPE_COLORS.items()]
-        ax.legend(handles=legend_patches, loc="upper right", fontsize=9)
+
+        if self.structure.is_nucleic_acid:
+            nt_order = ["A", "C", "G", "T", "U"]
+            nt_colors = {"A": "#e41a1c", "C": "#377eb8", "G": "#4daf4a", "T": "#984ea3", "U": "#ff7f00"}
+            present = [nt for nt in nt_order if comp.residue_fractions.get(nt, 0) > 0]
+            fracs = [comp.residue_fractions.get(nt, 0) * 100 for nt in present]
+            colors = [nt_colors.get(nt, "#999999") for nt in present]
+            ax.bar(present, fracs, color=colors, edgecolor="white", linewidth=0.5)
+            expected = 100 / len(present) if present else 25
+            ax.axhline(expected, color="gray", linestyle="--", alpha=0.7, label=f"Expected ({expected:.0f}%)")
+            ax.set_xlabel("Nucleotide"); ax.set_ylabel("Frequency (%)")
+            ax.set_title("Nucleotide Composition")
+        else:
+            aa_order = ["A","V","L","I","M","F","W","S","T","N","Q","Y","C","K","R","H","D","E","G","P"]
+            fracs = [comp.residue_fractions.get(aa, 0) * 100 for aa in aa_order]
+            colors = [AA_TYPE_COLORS[AA_PROPERTIES[aa]["type"]] for aa in aa_order]
+            ax.bar(aa_order, fracs, color=colors, edgecolor="white", linewidth=0.5)
+            ax.axhline(5, color="gray", linestyle="--", alpha=0.7, label="Expected (5%)")
+            ax.set_xlabel("Amino Acid"); ax.set_ylabel("Frequency (%)")
+            ax.set_title("Amino Acid Composition")
+            legend_patches = [mpatches.Patch(color=c, label=t.title()) for t, c in AA_TYPE_COLORS.items()]
+            ax.legend(handles=legend_patches, loc="upper right", fontsize=9)
+
+        ax.legend(loc="upper right", fontsize=9)
         fig.tight_layout()
         return fig
 
@@ -939,9 +1091,11 @@ class StructureCharacterizer:
             "contact_order": self.plot_contact_order(),
             "residue_contacts": self.plot_residue_contacts(),
             "aa_composition": self.plot_aa_composition(),
-            "ss_composition": self.plot_ss_composition(),
-            "ss_profile": self.plot_ss_profile(),
         }
+        # Secondary structure analysis only for proteins (DSSP doesn't work on NA)
+        if not self.structure.is_nucleic_acid:
+            figures["ss_composition"] = self.plot_ss_composition()
+            figures["ss_profile"] = self.plot_ss_profile()
 
         # Add PAE figures if available
         if self.has_pae:
@@ -995,9 +1149,11 @@ class StructureCharacterizer:
         with PdfPages(output_path) as pdf:
             fig = self._create_summary_page(seq_comp, conf_stats, contact_analysis, ss_analysis, pae_analysis)
             pdf.savefig(fig, bbox_inches="tight"); plt.close(fig)
-            for plot_fn in [self.plot_aa_composition, self.plot_plddt_distribution, self.plot_plddt_profile,
-                            self.plot_contact_map, self.plot_contact_order, self.plot_residue_contacts,
-                            self.plot_ss_composition, self.plot_ss_profile]:
+            plot_fns = [self.plot_aa_composition, self.plot_plddt_distribution, self.plot_plddt_profile,
+                        self.plot_contact_map, self.plot_contact_order, self.plot_residue_contacts]
+            if not self.structure.is_nucleic_acid:
+                plot_fns.extend([self.plot_ss_composition, self.plot_ss_profile])
+            for plot_fn in plot_fns:
                 fig = plot_fn()
                 pdf.savefig(fig, bbox_inches="tight"); plt.close(fig)
             # Add PAE plots if available
@@ -1015,6 +1171,130 @@ class StructureCharacterizer:
             glossary_figs = self._create_glossary_pages()
             for fig in glossary_figs:
                 pdf.savefig(fig, bbox_inches="tight"); plt.close(fig)
+
+    def generate_json_report(self, output_path: str, include_per_residue: bool = True) -> dict:
+        """Generate JSON analysis report with all computed data.
+
+        Args:
+            output_path: Path to write JSON file.
+            include_per_residue: Include per-residue arrays (pLDDT, contacts,
+                secondary structure). Set False for compact output.
+
+        Returns:
+            The analysis dictionary that was written to file.
+        """
+        seq_comp = self.analyze_sequence_composition()
+        conf_stats = self.analyze_confidence()
+        contact_analysis = self.analyze_contacts()
+        ss_analysis = self.analyze_secondary_structure()
+        pae_analysis = self.analyze_pae()  # May be None
+
+        analysis: dict = {
+            "metadata": {
+                "generated_at": datetime.now().isoformat(),
+                "tool": "protein_compare",
+                "command": "characterize",
+                "structure_name": self.structure.name,
+                "structure_type": self.structure_type,
+                "source_path": str(self.structure.source_path) if self.structure.source_path else None,
+            },
+            "structure": {
+                "name": self.structure.name,
+                "molecule_type": self.structure.molecule_type,
+                "n_residues": self.structure.n_residues,
+                "sequence": self.structure.sequence,
+                "chains": seq_comp.chains,
+                "is_predicted": self.is_predicted,
+            },
+            "sequence_composition": seq_comp.to_dict(),
+            "confidence": conf_stats.to_dict(),
+            "contacts": contact_analysis.to_dict(include_matrices=include_per_residue),
+            "secondary_structure": ss_analysis.to_dict(),
+        }
+
+        # Per-residue arrays (for charts)
+        if include_per_residue:
+            analysis["per_residue"] = {
+                "plddt": [round(float(v), 2) for v in self.structure.plddt],
+                "residue_ids": [
+                    {"chain": rid[0], "resnum": rid[1]}
+                    for rid in self.structure.residue_ids
+                ],
+            }
+
+        # PAE analysis (optional)
+        if pae_analysis is not None:
+            analysis["pae"] = pae_analysis.to_dict(include_matrix=include_per_residue)
+            # Mirror a slim PAE summary next to the pLDDT confidence metrics so
+            # the score is machine-readable alongside confidence (matrix stays
+            # under the "pae" key; this is scalars only, no duplication).
+            pae_summary = {"mean_pae": round(pae_analysis.mean_pae, 2)}
+            if pae_analysis.pae_data.ptm is not None:
+                pae_summary["ptm"] = round(pae_analysis.pae_data.ptm, 4)
+            if pae_analysis.pae_data.iptm is not None:
+                pae_summary["iptm"] = round(pae_analysis.pae_data.iptm, 4)
+            analysis["confidence"]["pae_summary"] = pae_summary
+
+        # Chai scores (optional)
+        if self.has_chai_scores:
+            scores = self.chai_scores
+            analysis["chai_scores"] = {
+                "aggregate_score": round(float(scores.aggregate_score), 4),
+                "ptm": round(float(scores.ptm), 4),
+                "iptm": round(float(scores.iptm), 4),
+                "has_inter_chain_clashes": bool(scores.has_inter_chain_clashes),
+                "n_chains": scores.n_chains,
+                "is_multimer": scores.is_multimer,
+            }
+
+        # MSA depth (optional)
+        if self.has_msa_depth:
+            msa = self.msa_depth
+            analysis["msa_depth"] = {
+                "mean_depth": round(float(msa.mean_depth), 1),
+                "median_depth": round(float(msa.median_depth), 1),
+                "max_depth": int(msa.max_depth),
+                "min_depth": int(msa.min_depth),
+                "n_residues": msa.n_residues,
+            }
+            if include_per_residue:
+                analysis["msa_depth"]["per_residue_depth"] = msa.depths.tolist()
+
+        # Prediction provenance (optional). The HTML report already renders the
+        # run metadata via _build_provenance_html_section(); here we mirror the
+        # same facts into the machine-readable JSON so programmatic consumers can
+        # read them too. Only present, non-null keys are emitted. (#39)
+        if self.has_metadata:
+            m = self.metadata
+            provenance = {
+                key: m[key]
+                for key in (
+                    "schema_version",
+                    "tool",
+                    "requested_tool",
+                    "version",
+                    "tool_version",
+                    "status",
+                    "started_at",
+                    "completed_at",
+                    "runtime_seconds",
+                    "backend",
+                    "container_image",
+                    "command",
+                    "params",
+                    "inputs",
+                    "msa_source",
+                    "msa",
+                )
+                if m.get(key) is not None
+            }
+            if provenance:
+                analysis["prediction_provenance"] = provenance
+
+        with open(output_path, "w") as f:
+            _json.dump(analysis, f, indent=2)
+
+        return analysis
 
     def _create_summary_page(self, seq_comp, conf_stats, contact_analysis, ss_analysis, pae_analysis=None) -> Figure:
         """Create summary page for PDF."""
@@ -1138,7 +1418,8 @@ class StructureCharacterizer:
             summary_quality_value = f"{conf_stats.frac_confident:.0%}"
             dist_caption = "Distribution of pLDDT confidence scores"
             profile_caption = "Per-residue pLDDT profile"
-            color_btn_label = "Color by pLDDT"
+            color_btn_label = "pLDDT"
+            color_btn_tooltip = "Color each residue by pLDDT confidence (0-100): blue = high confidence, red = low. Highlights which parts of the prediction are reliable."
         else:
             score_name = "B-factor"
             score_unit = " Ų"
@@ -1157,7 +1438,51 @@ class StructureCharacterizer:
             summary_quality_value = f"{ordered_frac:.0%}"
             dist_caption = "Distribution of B-factor (atomic displacement) values"
             profile_caption = "Per-residue B-factor profile"
-            color_btn_label = "Color by B-factor"
+            color_btn_label = "B-factor"
+            color_btn_tooltip = "Color each residue by B-factor (atomic displacement): blue = low/ordered, red = high/flexible. Highlights rigid vs. mobile regions."
+
+        # PAE summary metric boxes, shown alongside pLDDT/B-factor when PAE
+        # data is present. Lower mean PAE indicates more confident relative
+        # positioning; pTM/ipTM are global/interface confidence scores.
+        pae_summary_boxes = ""
+        if pae_analysis is not None:
+            pae_summary_boxes = (
+                f'<div class="metric-box"><div class="metric-value">{pae_analysis.mean_pae:.1f} Å</div>'
+                f'<div class="metric-label">Mean PAE</div></div>'
+            )
+            ptm = pae_analysis.pae_data.ptm
+            iptm = pae_analysis.pae_data.iptm
+            if ptm is not None:
+                pae_summary_boxes += (
+                    f'<div class="metric-box"><div class="metric-value">{ptm:.2f}</div>'
+                    f'<div class="metric-label">pTM</div></div>'
+                )
+            if iptm is not None:
+                pae_summary_boxes += (
+                    f'<div class="metric-box"><div class="metric-value">{iptm:.2f}</div>'
+                    f'<div class="metric-label">ipTM</div></div>'
+                )
+
+        try:
+            from importlib.metadata import version as _pkg_version
+            report_version = _pkg_version("protein_compare")
+        except Exception:
+            from protein_compare import __version__ as report_version
+
+        # Append the git commit (short hash) when the package is a git checkout.
+        # Falls back to no suffix for installed/deployed copies that aren't in git.
+        report_commit = ""
+        try:
+            import subprocess
+            _pkg_dir = Path(__file__).resolve().parent
+            _res = subprocess.run(
+                ["git", "-C", str(_pkg_dir), "rev-parse", "--short", "HEAD"],
+                capture_output=True, text=True, timeout=2,
+            )
+            if _res.returncode == 0 and _res.stdout.strip():
+                report_commit = f" ({_res.stdout.strip()})"
+        except Exception:
+            report_commit = ""
 
         return f'''<!DOCTYPE html>
 <html lang="en">
@@ -1188,11 +1513,17 @@ class StructureCharacterizer:
         .glossary-def {{ font-size: 13px; color: #555; line-height: 1.5; }}
         #viewer-container {{ width: 100%; height: 500px; position: relative; border-radius: 8px; overflow: hidden; }}
         #viewer {{ width: 100%; height: 100%; }}
-        .viewer-controls {{ display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; justify-content: center; }}
-        .viewer-controls button {{ padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; transition: background 0.2s; }}
-        .viewer-controls button {{ background: #3498db; color: white; }}
+        .viewer-controls {{ display: flex; gap: 28px; margin-top: 12px; flex-wrap: wrap; justify-content: center; align-items: flex-end; }}
+        .control-group {{ display: flex; flex-direction: column; gap: 5px; }}
+        .control-group-label {{ font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: #95a5a6; font-weight: 700; text-align: center; }}
+        .control-group-buttons {{ display: flex; gap: 6px; }}
+        .control-group + .control-group {{ border-left: 1px solid #e1e4e8; padding-left: 28px; margin-left: -16px; }}
+        .viewer-controls button {{ padding: 8px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; transition: background 0.2s; background: #3498db; color: white; }}
         .viewer-controls button:hover {{ background: #2980b9; }}
         .viewer-controls button.active {{ background: #2c3e50; }}
+        .control-group.actions button {{ background: #7f8c8d; }}
+        .control-group.actions button:hover {{ background: #636e72; }}
+        .control-group.actions button.active {{ background: #16a085; }}
     </style>
 </head>
 <body>
@@ -1205,35 +1536,52 @@ class StructureCharacterizer:
             <div id="viewer"></div>
         </div>
         <div class="viewer-controls">
-            <button onclick="setStyle('cartoon')" id="btn-cartoon" class="active">Cartoon</button>
-            <button onclick="setStyle('stick')" id="btn-stick">Sticks</button>
-            <button onclick="setStyle('sphere')" id="btn-sphere">Spheres</button>
-            <button onclick="setStyle('line')" id="btn-line">Lines</button>
-            <button onclick="colorBy('ss')" id="btn-ss">Color by SS</button>
-            <button onclick="colorBy('bfactor')" id="btn-bfactor">{color_btn_label}</button>
-            <button onclick="colorBy('chain')" id="btn-chain">Color by Chain</button>
-            <button onclick="viewer.spin(spinning = !spinning)" id="btn-spin">Spin</button>
-            <button onclick="viewer.zoomTo(); viewer.render();">Reset View</button>
+            <div class="control-group">
+                <div class="control-group-label">Representation</div>
+                <div class="control-group-buttons">
+                    <button onclick="setStyle('cartoon')" id="btn-cartoon" class="active" title="Cartoon/ribbon trace of the backbone; best for seeing overall fold and secondary structure.">Cartoon</button>
+                    <button onclick="setStyle('stick')" id="btn-stick" title="Show every atom as a stick; best for side chains and small molecules.">Sticks</button>
+                    <button onclick="setStyle('sphere')" id="btn-sphere" title="Space-filling spheres (van der Waals radii); shows molecular volume and packing.">Spheres</button>
+                    <button onclick="setStyle('line')" id="btn-line" title="Thin wireframe lines; a lightweight all-atom view.">Lines</button>
+                </div>
+            </div>
+            <div class="control-group">
+                <div class="control-group-label">Color</div>
+                <div class="control-group-buttons">
+                    <button onclick="colorBy('spectrum')" id="btn-spectrum" title="Rainbow from N-terminus (blue) to C-terminus (red). Highlights chain direction and how the sequence threads through the fold.">Rainbow</button>
+                    <button onclick="colorBy('ss')" id="btn-ss" title="Color by secondary structure: helices, sheets/strands, and coil get distinct colors. Highlights fold elements. (Needs HELIX/SHEET records; predicted PDBs often lack them.)">Secondary structure</button>
+                    <button onclick="colorBy('bfactor')" id="btn-bfactor" class="active" title="{color_btn_tooltip}">{color_btn_label}</button>
+                    <button onclick="colorBy('chain')" id="btn-chain" title="Give each chain its own color. Highlights subunits in a complex; a single-chain structure shows one color.">Chain</button>
+                </div>
+            </div>
+            <div class="control-group actions">
+                <div class="control-group-label">View</div>
+                <div class="control-group-buttons">
+                    <button onclick="toggleSpin()" id="btn-spin" title="Toggle continuous rotation.">Spin</button>
+                    <button onclick="resetView()" id="btn-reset" title="Re-center and reset zoom (keeps the current representation and color).">Reset view</button>
+                </div>
+            </div>
         </div>
         <div class="figure-caption">Interactive 3D viewer. Drag to rotate, scroll to zoom, right-click drag to translate.</div>
     </div>
 
     <div class="section" id="summary"><h2>Summary</h2>
         <div class="metrics-grid">
-            <div class="metric-box"><div class="metric-value">{seq_comp.length}</div><div class="metric-label">Residues</div></div>
-            <div class="metric-box"><div class="metric-value">{seq_comp.molecular_weight/1000:.1f} kDa</div><div class="metric-label">Molecular Weight</div></div>
+            <div class="metric-box"><div class="metric-value">{seq_comp.length}</div><div class="metric-label">{"Nucleotides" if self.structure.is_nucleic_acid else "Residues"}</div></div>
+            {"" if self.structure.is_nucleic_acid else f'<div class="metric-box"><div class="metric-value">{seq_comp.molecular_weight/1000:.1f} kDa</div><div class="metric-label">Molecular Weight</div></div>'}
             <div class="metric-box {highlight_class}"><div class="metric-value">{conf_stats.mean:.1f}{score_unit}</div><div class="metric-label">{mean_label}</div></div>
             <div class="metric-box highlight"><div class="metric-value">{summary_quality_value}</div><div class="metric-label">{summary_quality_label}</div></div>
             <div class="metric-box"><div class="metric-value">{contact_analysis.n_contacts}</div><div class="metric-label">Contacts</div></div>
-            <div class="metric-box"><div class="metric-value">{ss_analysis.helix_fraction:.0%}/{ss_analysis.sheet_fraction:.0%}</div><div class="metric-label">Helix/Sheet</div></div>
+            {"" if self.structure.is_nucleic_acid else f'<div class="metric-box"><div class="metric-value">{ss_analysis.helix_fraction:.0%}/{ss_analysis.sheet_fraction:.0%}</div><div class="metric-label">Helix/Sheet</div></div>'}
         </div>
     </div>
-    <div class="section" id="sequence"><h2>Sequence Analysis</h2>
+    <div class="section" id="sequence"><h2>{"Nucleotide" if self.structure.is_nucleic_acid else "Sequence"} Analysis</h2>
         <div class="metrics-grid">
-            <div class="metric-box"><div class="metric-value">{seq_comp.type_fractions.get("hydrophobic", 0):.0%}</div><div class="metric-label">Hydrophobic</div></div>
+            {f"""<div class="metric-box"><div class="metric-value">{seq_comp.type_fractions.get("purine", 0):.0%}</div><div class="metric-label">Purine (A/G)</div></div>
+            <div class="metric-box"><div class="metric-value">{seq_comp.type_fractions.get("pyrimidine", 0):.0%}</div><div class="metric-label">Pyrimidine (C/T/U)</div></div>""" if self.structure.is_nucleic_acid else f"""<div class="metric-box"><div class="metric-value">{seq_comp.type_fractions.get("hydrophobic", 0):.0%}</div><div class="metric-label">Hydrophobic</div></div>
             <div class="metric-box"><div class="metric-value">{seq_comp.type_fractions.get("polar", 0):.0%}</div><div class="metric-label">Polar</div></div>
             <div class="metric-box"><div class="metric-value">{seq_comp.type_fractions.get("positive", 0):.0%}</div><div class="metric-label">Positive (+)</div></div>
-            <div class="metric-box"><div class="metric-value">{seq_comp.type_fractions.get("negative", 0):.0%}</div><div class="metric-label">Negative (-)</div></div>
+            <div class="metric-box"><div class="metric-value">{seq_comp.type_fractions.get("negative", 0):.0%}</div><div class="metric-label">Negative (-)</div></div>"""}
         </div>
         <div class="figure"><img src="data:image/png;base64,{images_b64["aa_composition"]}" alt="AA Composition"><div class="figure-caption">Amino acid composition by residue type</div></div>
         <h3>Sequence</h3><div class="sequence">{self.structure.sequence}</div>
@@ -1244,6 +1592,7 @@ class StructureCharacterizer:
             <div class="metric-box"><div class="metric-value">{conf_stats.median:.1f}{score_unit}</div><div class="metric-label">{median_label}</div></div>
             <div class="metric-box"><div class="metric-value">{high_value}</div><div class="metric-label">{high_label}</div></div>
             <div class="metric-box"><div class="metric-value">{low_value}</div><div class="metric-label">{low_label}</div></div>
+            {pae_summary_boxes}
         </div>
         <div class="figure"><img src="data:image/png;base64,{images_b64["plddt_distribution"]}" alt="{score_name} Distribution"><div class="figure-caption">{dist_caption}</div></div>
         <div class="figure"><img src="data:image/png;base64,{images_b64["plddt_profile"]}" alt="{score_name} Profile"><div class="figure-caption">{profile_caption}</div></div>
@@ -1259,15 +1608,15 @@ class StructureCharacterizer:
         <div class="figure"><img src="data:image/png;base64,{images_b64["contact_order"]}" alt="Contact Order"><div class="figure-caption">Contact order distribution</div></div>
         <div class="figure"><img src="data:image/png;base64,{images_b64["residue_contacts"]}" alt="Residue Contacts"><div class="figure-caption">Contacts per residue</div></div>
     </div>
-    <div class="section" id="secondary"><h2>Secondary Structure</h2>
+    {"" if self.structure.is_nucleic_acid else f"""<div class="section" id="secondary"><h2>Secondary Structure</h2>
         <div class="metrics-grid">
             <div class="metric-box"><div class="metric-value">{ss_analysis.helix_fraction:.1%}</div><div class="metric-label">Helix ({ss_analysis.helix_count} res)</div></div>
             <div class="metric-box"><div class="metric-value">{ss_analysis.sheet_fraction:.1%}</div><div class="metric-label">Sheet ({ss_analysis.sheet_count} res)</div></div>
             <div class="metric-box"><div class="metric-value">{ss_analysis.coil_fraction:.1%}</div><div class="metric-label">Coil ({ss_analysis.coil_count} res)</div></div>
         </div>
-        <div class="figure"><img src="data:image/png;base64,{images_b64["ss_composition"]}" alt="SS Composition"><div class="figure-caption">Secondary structure composition</div></div>
-        <div class="figure"><img src="data:image/png;base64,{images_b64["ss_profile"]}" alt="SS Profile"><div class="figure-caption">Secondary structure profile</div></div>
-    </div>
+        <div class="figure"><img src="data:image/png;base64,{images_b64['ss_composition']}" alt="SS Composition"><div class="figure-caption">Secondary structure composition</div></div>
+        <div class="figure"><img src="data:image/png;base64,{images_b64['ss_profile']}" alt="SS Profile"><div class="figure-caption">Secondary structure profile</div></div>
+    </div>"""}
 
     {self._build_pae_html_section(pae_analysis, images_b64)}
 
@@ -1275,19 +1624,27 @@ class StructureCharacterizer:
 
     {self._build_msa_html_section(images_b64)}
 
+    {self._build_provenance_html_section()}
+
     <div class="section" id="glossary">
         <h2>Glossary of Terms</h2>
         <div class="glossary-grid">
             {self._build_glossary_html()}
         </div>
     </div>
-    <div class="footer">Generated by protein_compare v0.1.0</div>
+    <div class="footer">Generated by protein_compare v{report_version}{report_commit}</div>
 
     <script>
         let viewer = null;
         let spinning = false;
         let currentStyle = 'cartoon';
-        let currentColor = 'ss';
+        // Default to 'bfactor' (pLDDT confidence for predicted models, B-factor
+        // for experimental), the most informative default for a single chain.
+        // NOTE: not 'ss' - predicted PDBs (Boltz/Chai/AF/ESMFold) usually lack
+        // HELIX/SHEET records, so an SS colorscheme renders the whole backbone as
+        // coil in one flat color. 'Rainbow' and 'Secondary structure' remain
+        // available as buttons.
+        let currentColor = 'bfactor';
 
         const structureData = `{structure_escaped}`;
         const structureFormat = '{structure_format}';
@@ -1308,14 +1665,33 @@ class StructureCharacterizer:
 
         function setStyle(style) {{
             currentStyle = style;
-            document.querySelectorAll('.viewer-controls button').forEach(b => b.classList.remove('active'));
+            // Only toggle 'active' within the Representation group.
+            ['btn-cartoon','btn-stick','btn-sphere','btn-line'].forEach(
+                id => document.getElementById(id).classList.remove('active'));
             document.getElementById('btn-' + style).classList.add('active');
             applyStyle();
         }}
 
         function colorBy(scheme) {{
             currentColor = scheme;
+            // Only toggle 'active' within the Color group.
+            const colorBtns = {{ spectrum: 'btn-spectrum', ss: 'btn-ss', bfactor: 'btn-bfactor', chain: 'btn-chain' }};
+            Object.values(colorBtns).forEach(id => document.getElementById(id).classList.remove('active'));
+            const active = document.getElementById(colorBtns[scheme]);
+            if (active) active.classList.add('active');
             applyStyle();
+        }}
+
+        function toggleSpin() {{
+            spinning = !spinning;
+            viewer.spin(spinning);
+            document.getElementById('btn-spin').classList.toggle('active', spinning);
+        }}
+
+        function resetView() {{
+            // Camera reset only; representation/color selections are preserved.
+            viewer.zoomTo();
+            viewer.render();
         }}
 
         function applyStyle() {{
@@ -1324,6 +1700,11 @@ class StructureCharacterizer:
 
             let styleSpec = {{}};
             if (currentStyle === 'cartoon') {{
+                // Default cartoon coloring is 'spectrum' (rainbow N->C by residue).
+                // NOTE: predicted PDBs (Boltz/Chai/AF/ESMFold) usually lack HELIX/SHEET
+                // records, so 3Dmol cannot infer secondary structure from the file and
+                // would render the whole backbone as coil (uniformly dark) if colored
+                // by 'ss'. Spectrum keeps the backbone visually informative by default.
                 styleSpec = {{ cartoon: {{ color: 'spectrum' }} }};
             }} else if (currentStyle === 'stick') {{
                 styleSpec = {{ stick: {{ radius: 0.15 }} }};
@@ -1333,29 +1714,54 @@ class StructureCharacterizer:
                 styleSpec = {{ line: {{}} }};
             }}
 
-            if (currentColor === 'ss') {{
+            if (currentColor === 'spectrum') {{
+                // Rainbow N->C by residue. Cartoon already has color:'spectrum' from
+                // the base styleSpec above; apply it to the other representations too.
+                if (currentStyle !== 'cartoon') {{
+                    styleSpec[currentStyle].color = 'spectrum';
+                }}
+            }} else if (currentColor === 'ss') {{
                 if (currentStyle === 'cartoon') {{
-                    styleSpec.cartoon.color = 'ss';
+                    // Color cartoon by secondary structure. 'ssPyMOL' maps helix/sheet/coil
+                    // to distinct colors. NOTE: if the PDB lacks HELIX/SHEET records (common
+                    // for predicted models), 3Dmol's inferred SS may be all-coil, so this can
+                    // still look uniform; the default 'Rainbow' color keeps the backbone
+                    // informative in that case.
+                    styleSpec.cartoon.color = undefined;
+                    styleSpec.cartoon.colorscheme = 'ssPyMOL';
                 }} else {{
                     styleSpec[currentStyle].colorscheme = 'ssJmol';
                 }}
             }} else if (currentColor === 'bfactor') {{
                 // Color by B-factor (pLDDT) - blue high, red low
                 if (currentStyle === 'cartoon') {{
-                    styleSpec.cartoon.color = 'b';
+                    styleSpec.cartoon.color = undefined;
                     styleSpec.cartoon.colorscheme = {{ prop: 'b', gradient: 'roygb', min: 0, max: 100 }};
                 }} else {{
                     styleSpec[currentStyle].colorscheme = {{ prop: 'b', gradient: 'roygb', min: 0, max: 100 }};
                 }}
             }} else if (currentColor === 'chain') {{
+                // 'chain' is a colorscheme name, not a color value; assigning it to
+                // `color` makes 3Dmol fall back to black. Use `colorscheme` for all reps.
                 if (currentStyle === 'cartoon') {{
-                    styleSpec.cartoon.color = 'chain';
+                    styleSpec.cartoon.color = undefined;
+                    styleSpec.cartoon.colorscheme = 'chain';
                 }} else {{
                     styleSpec[currentStyle].colorscheme = 'chain';
                 }}
             }}
 
             viewer.setStyle({{}}, styleSpec);
+
+            // When the protein is shown as cartoon, ligands/hetero atoms have no cartoon
+            // backbone and would otherwise be invisible. Always render HETATM atoms as
+            // sticks on top of the cartoon so ligands stay visible. (For whole-structure
+            // stick/sphere/line views the global style already covers HETATM atoms.)
+            // 3Dmol selector: {{hetflag: true}} matches ATOM records flagged HETATM.
+            if (currentStyle === 'cartoon') {{
+                viewer.setStyle({{ hetflag: true }}, {{ stick: {{ radius: 0.2, colorscheme: 'default' }} }});
+            }}
+
             viewer.render();
         }}
     </script>
@@ -1498,6 +1904,108 @@ class StructureCharacterizer:
         </div>
         <div class="figure"><img src="data:image/png;base64,{images_b64["msa_depth"]}" alt="MSA Depth"><div class="figure-caption">MSA depth per residue position</div></div>
         <p style="color: #555; font-style: italic; margin-top: 15px;">{quality}</p>
+    </div>
+'''
+
+    def _build_provenance_html_section(self) -> str:
+        if not self.has_metadata:
+            return ""
+
+        m = self.metadata
+        tool = m.get("tool", "unknown")
+        requested = m.get("requested_tool", tool)
+        version = m.get("version", "")
+        tool_version = m.get("tool_version", "")
+        status = m.get("status", "")
+        runtime = m.get("runtime_seconds")
+        started = m.get("started_at", "")
+        completed = m.get("completed_at", "")
+        container = m.get("container_image", "")
+        backend = m.get("backend", "")
+        params = m.get("params", {})
+        inputs = m.get("inputs", [])
+
+        tool_display = tool.replace("-", " ").title()
+        if requested == "auto" and tool and tool != "auto":
+            # Surface which tool "auto" mode resolved to, rather than just
+            # showing "(requested: auto)". (#47)
+            tool_display = f'auto &rarr; {tool.replace("-", " ").title()}'
+        elif requested and requested != tool:
+            tool_display += f' <span style="color:#888;">(requested: {requested})</span>'
+
+        runtime_display = ""
+        if runtime is not None:
+            mins, secs = divmod(int(runtime), 60)
+            hrs, mins = divmod(mins, 60)
+            if hrs:
+                runtime_display = f"{hrs}h {mins}m {secs}s"
+            elif mins:
+                runtime_display = f"{mins}m {secs}s"
+            else:
+                runtime_display = f"{secs}s"
+
+        rows = []
+        rows.append(f'<tr><td style="font-weight:600;white-space:nowrap;">Tool</td><td>{tool_display}</td></tr>')
+        if version:
+            rows.append(f'<tr><td style="font-weight:600;white-space:nowrap;">predict-structure</td><td>v{version}</td></tr>')
+        if tool_version:
+            rows.append(f'<tr><td style="font-weight:600;white-space:nowrap;">Tool version</td><td>{tool_version}</td></tr>')
+        if status:
+            badge_color = "#2ecc71" if status == "success" else "#e67e22"
+            rows.append(f'<tr><td style="font-weight:600;white-space:nowrap;">Status</td><td><span style="background:{badge_color};color:#fff;padding:2px 8px;border-radius:4px;font-size:0.85em;">{status}</span></td></tr>')
+        if runtime_display:
+            rows.append(f'<tr><td style="font-weight:600;white-space:nowrap;">Runtime</td><td>{runtime_display}</td></tr>')
+        if started:
+            rows.append(f'<tr><td style="font-weight:600;white-space:nowrap;">Started</td><td>{started}</td></tr>')
+        if completed:
+            rows.append(f'<tr><td style="font-weight:600;white-space:nowrap;">Completed</td><td>{completed}</td></tr>')
+        if backend:
+            rows.append(f'<tr><td style="font-weight:600;white-space:nowrap;">Backend</td><td>{backend}</td></tr>')
+        if container:
+            rows.append(f'<tr><td style="font-weight:600;white-space:nowrap;">Container</td><td style="word-break:break-all;font-family:monospace;font-size:0.9em;">{container}</td></tr>')
+
+        # Parameters
+        params_html = ""
+        if params:
+            from html import escape
+            param_rows = []
+            for k, v in sorted(params.items()):
+                if v is None:
+                    continue
+                param_rows.append(f'<tr><td style="font-family:monospace;padding:2px 8px;">{escape(str(k))}</td><td style="padding:2px 8px;">{escape(str(v))}</td></tr>')
+            if param_rows:
+                params_html = f'''
+        <details style="margin-top:12px;">
+            <summary style="cursor:pointer;font-weight:600;color:#555;">Parameters</summary>
+            <table style="margin-top:8px;border-collapse:collapse;width:100%;">{"".join(param_rows)}</table>
+        </details>'''
+
+        # Inputs
+        inputs_html = ""
+        if inputs:
+            from html import escape
+            input_items = []
+            for inp in inputs:
+                name = inp.get("original_name", inp.get("filename", ""))
+                role = inp.get("role", "")
+                label = f"<b>{escape(name)}</b>" if name else ""
+                if role:
+                    label += f' <span style="color:#888;">({escape(role)})</span>'
+                if label:
+                    input_items.append(f"<li>{label}</li>")
+            if input_items:
+                inputs_html = f'''
+        <details style="margin-top:8px;">
+            <summary style="cursor:pointer;font-weight:600;color:#555;">Inputs</summary>
+            <ul style="margin-top:8px;">{"".join(input_items)}</ul>
+        </details>'''
+
+        return f'''
+    <div class="section" id="provenance"><h2>Job Provenance</h2>
+        <p style="color: #666; margin-bottom: 15px;">Run metadata from the prediction pipeline, recording the tool, parameters, and inputs used.</p>
+        <table style="border-collapse:collapse;width:100%;">{"".join(rows)}</table>
+        {params_html}
+        {inputs_html}
     </div>
 '''
 

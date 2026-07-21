@@ -448,8 +448,8 @@ def report(results_csv, output, fmt, min_tm, max_rmsd):
 @cli.command()
 @click.argument("structure", type=click.Path(exists=True))
 @click.option("--output", "-o", type=click.Path(), help="Output file path (without extension for 'both' format)")
-@click.option("--format", "fmt", type=click.Choice(["html", "pdf", "both"]), default="both",
-              help="Output format: html, pdf, or both")
+@click.option("--format", "fmt", type=click.Choice(["html", "pdf", "both", "json", "all"]), default="both",
+              help="Output format: html, pdf, both, json, or all (html+pdf+json)")
 @click.option("--contact-cutoff", default=8.0, help="Contact map distance cutoff (Å)")
 @click.option("--dpi", default=150, help="Image resolution for plots")
 @click.option("--experimental", "is_experimental", is_flag=True, default=False,
@@ -462,7 +462,9 @@ def report(results_csv, output, fmt, min_tm, max_rmsd):
               help="Path to Chai scores NPZ file (scores.model_idx_*.npz)")
 @click.option("--msa", "msa_path", type=click.Path(exists=True), default=None,
               help="Path to MSA parquet file (Chai .aligned.pqt, requires pyarrow)")
-def characterize(structure, output, fmt, contact_cutoff, dpi, is_experimental, is_predicted, pae_path, chai_scores_path, msa_path):
+@click.option("--metadata", "metadata_path", type=click.Path(exists=True), default=None,
+              help="Path to metadata.json from predict-structure (job provenance)")
+def characterize(structure, output, fmt, contact_cutoff, dpi, is_experimental, is_predicted, pae_path, chai_scores_path, msa_path, metadata_path):
     """Generate comprehensive characterization report for a structure.
 
     Analyzes confidence scores, contacts, secondary structure, and
@@ -493,6 +495,8 @@ def characterize(structure, output, fmt, contact_cutoff, dpi, is_experimental, i
         protein_compare characterize chai.cif --chai-scores scores.model_idx_0.npz
 
         protein_compare characterize chai.cif --chai-scores scores.npz --msa msas/seq.aligned.pqt
+
+        protein_compare characterize model_1.pdb --metadata metadata/metadata.json
     """
     click.echo("Loading structure...")
 
@@ -523,11 +527,14 @@ def characterize(structure, output, fmt, contact_cutoff, dpi, is_experimental, i
         pae_path=pae_path,
         chai_scores_path=chai_scores_path,
         msa_path=msa_path,
+        metadata_path=metadata_path,
     )
 
     # Show structure info with appropriate terminology
+    mol_label = struct.molecule_type.upper() if struct.is_nucleic_acid else "protein"
+    unit = "nucleotides" if struct.is_nucleic_acid else "residues"
     if characterizer.is_predicted:
-        click.echo(f"  {struct.name}: {struct.n_residues} residues, mean pLDDT: {struct.mean_plddt:.1f}")
+        click.echo(f"  {struct.name}: {struct.n_residues} {unit} ({mol_label}), mean pLDDT: {struct.mean_plddt:.1f}")
         click.echo(f"  Structure type: Predicted (pLDDT confidence scores)")
         if characterizer.has_pae:
             pae_analysis = characterizer.analyze_pae()
@@ -540,6 +547,8 @@ def characterize(structure, output, fmt, contact_cutoff, dpi, is_experimental, i
         if characterizer.has_msa_depth:
             msa = characterizer.msa_depth
             click.echo(f"  MSA depth loaded: mean={msa.mean_depth:.0f}, max={msa.max_depth}")
+        if characterizer.has_metadata:
+            click.echo(f"  Metadata loaded: tool={characterizer.metadata.get('tool', '?')}, status={characterizer.metadata.get('status', '?')}")
     else:
         click.echo(f"  {struct.name}: {struct.n_residues} residues, mean B-factor: {struct.mean_plddt:.1f} Ų")
         click.echo(f"  Structure type: Experimental (B-factor flexibility)")
@@ -556,17 +565,23 @@ def characterize(structure, output, fmt, contact_cutoff, dpi, is_experimental, i
         output_base = output.rsplit(".", 1)[0]
 
     try:
-        if fmt in ("html", "both"):
+        if fmt in ("html", "both", "all"):
             html_path = f"{output_base}.html" if not output.endswith(".html") else output
             click.echo("  Generating HTML report...")
             characterizer.generate_html_report(html_path)
             click.echo(f"  HTML report saved to: {html_path}")
 
-        if fmt in ("pdf", "both"):
+        if fmt in ("pdf", "both", "all"):
             pdf_path = f"{output_base}.pdf" if not output.endswith(".pdf") else output
             click.echo("  Generating PDF report...")
             characterizer.generate_pdf_report(pdf_path)
             click.echo(f"  PDF report saved to: {pdf_path}")
+
+        if fmt in ("json", "all"):
+            json_path = f"{output_base}.json" if not output.endswith(".json") else output
+            click.echo("  Generating JSON analysis data...")
+            characterizer.generate_json_report(json_path)
+            click.echo(f"  JSON analysis saved to: {json_path}")
 
     except Exception as e:
         click.echo(f"Error generating report: {e}", err=True)
