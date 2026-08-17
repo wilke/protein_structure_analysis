@@ -635,6 +635,27 @@ class StructureCharacterizer:
         else:
             return self._get_bfactor_color(val)
 
+    @staticmethod
+    def _mark_zero_count_bins(counts, patches) -> None:
+        """Give zero-count histogram bins a minimal visible height (issue #79).
+
+        matplotlib draws a zero-height rectangle for an empty bin, which is
+        invisible and indistinguishable from missing data. Raise each empty
+        bin to a thin baseline sliver (~1-2 px at the default figure size),
+        keeping its bin color, so the axis visibly covers every bin. Bars
+        with data are left untouched, and the y-axis limits are unaffected
+        because they were already computed from the true counts.
+        """
+        max_count = float(np.max(counts)) if len(counts) else 0.0
+        if max_count <= 0:
+            max_count = 1.0
+        min_height = 0.004 * max_count  # ~1-2 px on an 8x5 in figure
+        for patch in patches:
+            if patch.get_height() == 0:
+                patch.set_height(min_height)
+                # Drop the white edge so it does not swallow the sliver.
+                patch.set_linewidth(0)
+
     def plot_plddt_distribution(self) -> Figure:
         """Plot pLDDT/B-factor score distribution histogram."""
         fig, ax = plt.subplots(figsize=(8, 5))
@@ -648,6 +669,7 @@ class StructureCharacterizer:
             for i, patch in enumerate(patches):
                 bc = (bins[i] + bins[i + 1]) / 2
                 patch.set_facecolor(self._get_plddt_color(bc))
+            self._mark_zero_count_bins(n, patches)
             for thresh in [50, 70, 90]:
                 ax.axvline(thresh, color="gray", linestyle="--", linewidth=1, alpha=0.7)
             txt = f"Mean: {stats.mean:.1f}\nMedian: {stats.median:.1f}\nHigh conf: {stats.frac_confident:.1%}"
@@ -670,6 +692,7 @@ class StructureCharacterizer:
             for i, patch in enumerate(patches):
                 bc = (bins[i] + bins[i + 1]) / 2
                 patch.set_facecolor(self._get_bfactor_color(bc))
+            self._mark_zero_count_bins(n, patches)
             for thresh in [20, 40, 60]:
                 ax.axvline(thresh, color="gray", linestyle="--", linewidth=1, alpha=0.7)
             low_mobility = np.sum(values < 30) / len(values)
