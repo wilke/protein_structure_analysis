@@ -650,6 +650,15 @@ class StructureCharacterizer:
         if max_count <= 0:
             max_count = 1.0
         min_height = 0.004 * max_count  # ~1-2 px on an 8x5 in figure
+        # Never let an empty bin outdraw a real one: on large structures
+        # (max bin count > 250, i.e. ~5,000+ residues) 0.4% of the max
+        # exceeds a count-1 bar, inverting the visual ordering. Cap the
+        # sliver at half the smallest populated count so empty < populated
+        # always holds; at extreme scales both become sub-pixel together,
+        # which is at least consistent.
+        positive = [float(c) for c in counts if c > 0]
+        if positive:
+            min_height = min(min_height, 0.5 * min(positive))
         for patch in patches:
             if patch.get_height() == 0:
                 patch.set_height(min_height)
