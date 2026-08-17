@@ -1420,6 +1420,7 @@ class StructureCharacterizer:
             profile_caption = "Per-residue pLDDT profile"
             color_btn_label = "pLDDT"
             color_btn_tooltip = "Color each residue by pLDDT confidence (0-100): blue = high confidence, red = low. Highlights which parts of the prediction are reliable."
+            toc_confidence_label = "Confidence (pLDDT)"
         else:
             score_name = "B-factor"
             score_unit = " Ų"
@@ -1440,6 +1441,7 @@ class StructureCharacterizer:
             profile_caption = "Per-residue B-factor profile"
             color_btn_label = "B-factor"
             color_btn_tooltip = "Color each residue by B-factor (atomic displacement): blue = low/ordered, red = high/flexible. Highlights rigid vs. mobile regions."
+            toc_confidence_label = "B-factor"
 
         # PAE summary metric boxes, shown alongside pLDDT/B-factor when PAE
         # data is present. Lower mean PAE indicates more confident relative
@@ -1462,6 +1464,40 @@ class StructureCharacterizer:
                     f'<div class="metric-box"><div class="metric-value">{iptm:.2f}</div>'
                     f'<div class="metric-label">ipTM</div></div>'
                 )
+
+        # Pre-render the conditional sections so the table of contents can
+        # list only sections that are actually present in this report.
+        # Each builder returns "" when its data is unavailable.
+        pae_section_html = self._build_pae_html_section(pae_analysis, images_b64)
+        chai_section_html = self._build_chai_scores_html_section()
+        msa_section_html = self._build_msa_html_section(images_b64)
+        provenance_section_html = self._build_provenance_html_section()
+
+        # Table of contents: one entry per rendered section, using the
+        # sections' existing id= anchors. Conditional entries are added only
+        # when the corresponding section rendered (a link to a missing anchor
+        # is worse than no link).
+        toc_entries = [
+            ("structure-viewer", "3D Structure"),
+            ("summary", "Summary"),
+            ("sequence", "Nucleotide Analysis" if self.structure.is_nucleic_acid else "Sequence Analysis"),
+            ("confidence", toc_confidence_label),
+            ("contacts", "Contacts"),
+        ]
+        if not self.structure.is_nucleic_acid:
+            toc_entries.append(("secondary", "Secondary Structure"))
+        if pae_section_html:
+            toc_entries.append(("pae", "PAE"))
+        if chai_section_html:
+            toc_entries.append(("chai-scores", "Chai Scores"))
+        if msa_section_html:
+            toc_entries.append(("msa-depth", "MSA Depth"))
+        if provenance_section_html:
+            toc_entries.append(("provenance", "Provenance"))
+        toc_entries.append(("glossary", "Glossary"))
+        toc_links = "\n            ".join(
+            f'<a href="#{anchor}">{label}</a>' for anchor, label in toc_entries
+        )
 
         try:
             from importlib.metadata import version as _pkg_version
@@ -1492,10 +1528,15 @@ class StructureCharacterizer:
     <script src="https://3dmol.org/build/3Dmol-min.js"></script>
     <style>
         * {{ box-sizing: border-box; }}
+        html {{ scroll-behavior: smooth; }}
         body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f5f5f5; }}
         h1 {{ color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }}
         h2 {{ color: #2c3e50; border-bottom: 2px solid #bdc3c7; padding-bottom: 8px; margin-top: 30px; }}
         .section {{ background: white; padding: 20px; margin: 20px 0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+        .toc {{ background: white; padding: 10px 20px; margin: 20px 0; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; font-size: 13px; }}
+        .toc-label {{ font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: #95a5a6; font-weight: 700; margin-right: 4px; }}
+        .toc a {{ color: #3498db; text-decoration: none; font-weight: 600; white-space: nowrap; }}
+        .toc a:hover {{ color: #2980b9; text-decoration: underline; }}
         .metrics-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin: 15px 0; }}
         .metric-box {{ background: #ecf0f1; padding: 15px; border-radius: 6px; text-align: center; }}
         .metric-box.highlight {{ background: #d5f4e6; }}
@@ -1529,6 +1570,11 @@ class StructureCharacterizer:
 <body>
     <h1>Structure Characterization Report</h1>
     <p style="font-size: 18px; color: #666;"><strong>{self.structure.name}</strong></p>
+
+    <nav class="toc" aria-label="Report contents">
+        <span class="toc-label">Contents</span>
+            {toc_links}
+    </nav>
 
     <div class="section" id="structure-viewer">
         <h2>3D Structure</h2>
@@ -1594,8 +1640,8 @@ class StructureCharacterizer:
             <div class="metric-box"><div class="metric-value">{low_value}</div><div class="metric-label">{low_label}</div></div>
             {pae_summary_boxes}
         </div>
-        <div class="figure"><img src="data:image/png;base64,{images_b64["plddt_distribution"]}" alt="{score_name} Distribution"><div class="figure-caption">{dist_caption}</div></div>
         <div class="figure"><img src="data:image/png;base64,{images_b64["plddt_profile"]}" alt="{score_name} Profile"><div class="figure-caption">{profile_caption}</div></div>
+        <div class="figure"><img src="data:image/png;base64,{images_b64["plddt_distribution"]}" alt="{score_name} Distribution"><div class="figure-caption">{dist_caption}</div></div>
     </div>
     <div class="section" id="contacts"><h2>Contact Analysis</h2>
         <div class="metrics-grid">
@@ -1618,13 +1664,13 @@ class StructureCharacterizer:
         <div class="figure"><img src="data:image/png;base64,{images_b64['ss_profile']}" alt="SS Profile"><div class="figure-caption">Secondary structure profile</div></div>
     </div>"""}
 
-    {self._build_pae_html_section(pae_analysis, images_b64)}
+    {pae_section_html}
 
-    {self._build_chai_scores_html_section()}
+    {chai_section_html}
 
-    {self._build_msa_html_section(images_b64)}
+    {msa_section_html}
 
-    {self._build_provenance_html_section()}
+    {provenance_section_html}
 
     <div class="section" id="glossary">
         <h2>Glossary of Terms</h2>
