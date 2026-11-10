@@ -116,7 +116,9 @@ class SecondaryStructureAnalyzer:
             ss_file: Optional precomputed assignment: a 3-state H/E/C string
                 file or a classic DSSP file. Used instead of running DSSP when
                 its residue count matches the structure; otherwise a warning
-                is issued and DSSP is run as usual. A 3-state file carries no
+                is issued, the file is ignored and secondary structure is
+                computed from the structure (DSSP or the Cα fallback) as
+                usual. A 3-state file carries no
                 8-state detail, so ``simplify=False`` returns its H/E/C codes.
 
         Returns:
@@ -179,7 +181,10 @@ class SecondaryStructureAnalyzer:
         try:
             text = Path(path).read_text()
         except (OSError, UnicodeDecodeError) as e:
-            warnings.warn(f"Cannot read SS file {path}: {e}. Running DSSP instead.")
+            warnings.warn(
+                f"Cannot read SS file {path}: {e}. "
+                "Ignoring --ss-file and computing secondary structure from the structure instead."
+            )
             return None
 
         if "  #  RESIDUE" in text:
@@ -193,13 +198,17 @@ class SecondaryStructureAnalyzer:
         else:
             ss = list("".join(text.split()))
             if set(ss) - set("HEC"):
-                warnings.warn(f"SS file {path} is not a 3-state H/E/C string. Running DSSP instead.")
+                warnings.warn(
+                    f"SS file {path} is not a 3-state H/E/C string. "
+                    "Ignoring --ss-file and computing secondary structure from the structure instead."
+                )
                 return None
 
         if len(ss) != n_residues:
             warnings.warn(
                 f"SS file {path} has {len(ss)} residues but the structure has "
-                f"{n_residues}. Running DSSP instead."
+                f"{n_residues}. "
+                "Ignoring --ss-file and computing secondary structure from the structure instead."
             )
             return None
         return ss

@@ -14,6 +14,11 @@ sec = pytest.importorskip(
     reason="protein_compare dependencies not installed",
 )
 
+# Regex-safe: no metacharacters ("-" is literal outside a character class).
+_SS_FILE_IGNORED = (
+    "Ignoring --ss-file and computing secondary structure from the structure instead"
+)
+
 
 def _structure(n, source_path=None):
     return SimpleNamespace(
@@ -72,7 +77,7 @@ class TestAssignSsFile:
             analyzer, "_fallback_ss_assignment", lambda s, simplify=True: ["F"] * s.n_residues
         )
 
-        with pytest.warns(UserWarning, match="Running DSSP instead"):
+        with pytest.warns(UserWarning, match=_SS_FILE_IGNORED):
             ss = analyzer.assign_ss(_structure(8, tmp_path / "m.pdb"), ss_file=f)
 
         dssp_mock.assert_called_once()
@@ -86,7 +91,7 @@ class TestAssignSsFile:
             analyzer, "_fallback_ss_assignment", lambda s, simplify=True: ["F"] * s.n_residues
         )
 
-        with pytest.warns(UserWarning, match="Running DSSP instead"):
+        with pytest.warns(UserWarning, match=_SS_FILE_IGNORED):
             analyzer.assign_ss(_structure(8, tmp_path / "m.pdb"), ss_file=f)
 
         dssp_mock.assert_called_once()
@@ -97,12 +102,34 @@ class TestAssignSsFile:
             analyzer, "_fallback_ss_assignment", lambda s, simplify=True: ["F"] * s.n_residues
         )
 
-        with pytest.warns(UserWarning, match="Running DSSP instead"):
+        with pytest.warns(UserWarning, match=_SS_FILE_IGNORED):
             analyzer.assign_ss(
                 _structure(8, tmp_path / "m.pdb"), ss_file=tmp_path / "missing.txt"
             )
 
         dssp_mock.assert_called_once()
+
+
+def test_characterizer_forwards_ss_path_to_assign_ss(tmp_path):
+    report_mod = pytest.importorskip(
+        "protein_compare.visualization.structure_report",
+        reason="protein_compare dependencies not installed",
+    )
+    ss_file = tmp_path / "model_1.ss3.txt"
+    ss_file.write_text("HHEC\n")
+    structure = SimpleNamespace(n_residues=4, is_nucleic_acid=False, source_path=None)
+    # "experimental" skips the PAE/Chai/MSA/metadata auto-discovery.
+    characterizer = report_mod.StructureCharacterizer(
+        structure, structure_type="experimental", ss_path=str(ss_file)
+    )
+    characterizer.ss_analyzer = mock.Mock()
+    characterizer.ss_analyzer.assign_ss.return_value = list("HHEC")
+
+    characterizer.analyze_secondary_structure()
+
+    characterizer.ss_analyzer.assign_ss.assert_called_once_with(
+        structure, simplify=True, ss_file=str(ss_file)
+    )
 
 
 def test_characterize_cli_accepts_ss_file():
