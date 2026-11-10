@@ -464,7 +464,10 @@ def report(results_csv, output, fmt, min_tm, max_rmsd):
               help="Path to MSA parquet file (Chai .aligned.pqt, requires pyarrow)")
 @click.option("--metadata", "metadata_path", type=click.Path(exists=True), default=None,
               help="Path to metadata.json from predict-structure (job provenance)")
-def characterize(structure, output, fmt, contact_cutoff, dpi, is_experimental, is_predicted, pae_path, chai_scores_path, msa_path, metadata_path):
+@click.option("--ss-file", "ss_path", type=click.Path(exists=True), default=None,
+              help="Precomputed secondary structure (3-state H/E/C file or DSSP file); "
+                   "used instead of running DSSP when its length matches the structure")
+def characterize(structure, output, fmt, contact_cutoff, dpi, is_experimental, is_predicted, pae_path, chai_scores_path, msa_path, metadata_path, ss_path):
     """Generate comprehensive characterization report for a structure.
 
     Analyzes confidence scores, contacts, secondary structure, and
@@ -497,6 +500,8 @@ def characterize(structure, output, fmt, contact_cutoff, dpi, is_experimental, i
         protein_compare characterize chai.cif --chai-scores scores.npz --msa msas/seq.aligned.pqt
 
         protein_compare characterize model_1.pdb --metadata metadata/metadata.json
+
+        protein_compare characterize model_1.pdb --ss-file model_1.ss3.txt
     """
     click.echo("Loading structure...")
 
@@ -528,6 +533,7 @@ def characterize(structure, output, fmt, contact_cutoff, dpi, is_experimental, i
         chai_scores_path=chai_scores_path,
         msa_path=msa_path,
         metadata_path=metadata_path,
+        ss_path=ss_path,
     )
 
     # Show structure info with appropriate terminology
