@@ -27,7 +27,10 @@ def _structure(n, source_path=None):
 def _dssp_text(codes):
     lines = ["  #  RESIDUE AA STRUCTURE BP1 BP2  ACC\n"]
     for i, ss in enumerate(codes, 1):
-        lines.append(f"{i:5d}{i:5d} A A  {ss}    0   0\n")
+        if ss is None:  # chain-break row: "!" in the AA column
+            lines.append(f"{i:5d}" + " " * 8 + "!" + " " * 20 + "\n")
+        else:
+            lines.append(f"{i:5d}{i:5d} A A  {ss}    0   0\n")
     return "".join(lines)
 
 
@@ -53,7 +56,7 @@ class TestAssignSsFile:
 
     def test_dssp_file_is_used_and_simplified(self, tmp_path, dssp_mock):
         f = tmp_path / "model_1.dssp"
-        f.write_text(_dssp_text("HGEBTS "))
+        f.write_text(_dssp_text(["H", "G", "E", None, "B", "T", "S", " "]))
         analyzer = sec.SecondaryStructureAnalyzer()
         structure = _structure(7, tmp_path / "m.pdb")
 
@@ -112,3 +115,35 @@ def test_characterize_cli_accepts_ss_file():
 
     assert result.exit_code == 0
     assert "--ss-file" in result.output
+
+
+def test_characterize_cli_passes_ss_file_to_characterizer(tmp_path):
+    cli_mod = pytest.importorskip(
+        "protein_compare.cli", reason="protein_compare dependencies not installed"
+    )
+    from click.testing import CliRunner
+
+    class _Stop(Exception):
+        pass
+
+    seen = {}
+
+    def _characterizer(**kwargs):
+        seen.update(kwargs)
+        raise _Stop
+
+    pdb = tmp_path / "model_1.pdb"
+    pdb.write_text("END\n")
+    ss_file = tmp_path / "model_1.ss3.txt"
+    ss_file.write_text("HHHEECCC\n")
+
+    with mock.patch.object(
+        cli_mod, "StructureLoader",
+        return_value=SimpleNamespace(load=lambda path: SimpleNamespace()),
+    ), mock.patch.object(cli_mod, "StructureCharacterizer", side_effect=_characterizer):
+        result = CliRunner().invoke(
+            cli_mod.cli, ["characterize", str(pdb), "--ss-file", str(ss_file)]
+        )
+
+    assert isinstance(result.exception, _Stop), result.output
+    assert seen["ss_path"] == str(ss_file)
