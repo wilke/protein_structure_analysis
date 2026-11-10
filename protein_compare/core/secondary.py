@@ -106,12 +106,18 @@ class SecondaryStructureAnalyzer:
         self,
         structure: ProteinStructure,
         simplify: bool = True,
+        ss_file: Optional[str | Path] = None,
     ) -> list[str]:
         """Assign secondary structure using DSSP.
 
         Args:
             structure: ProteinStructure with BioPython structure.
             simplify: If True, return 3-state (H, E, C) instead of 8-state.
+            ss_file: Optional precomputed assignment: a 3-state H/E/C string
+                file or a classic DSSP file. Used instead of running DSSP when
+                its residue count matches the structure; otherwise a warning
+                is issued and DSSP is run as usual. A 3-state file carries no
+                8-state detail, so ``simplify=False`` returns its H/E/C codes.
 
         Returns:
             List of SS codes per residue.
@@ -119,6 +125,13 @@ class SecondaryStructureAnalyzer:
         Raises:
             RuntimeError: If DSSP fails.
         """
+        if ss_file is not None:
+            supplied = self._read_ss_file(ss_file, structure.n_residues)
+            if supplied is not None:
+                if simplify:
+                    supplied = [THREE_STATE_MAP.get(s, "C") for s in supplied]
+                return supplied
+
         if not HAS_DSSP:
             raise ImportError("BioPython DSSP module not available")
 
@@ -159,6 +172,37 @@ class SecondaryStructureAnalyzer:
             ss_list.append("C" if simplify else "-")
 
         return ss_list[:structure.n_residues]
+
+    @staticmethod
+    def _read_ss_file(path: str | Path, n_residues: int) -> Optional[list[str]]:
+        """Read a supplied SS file; return None (with a warning) if unusable."""
+        try:
+            text = Path(path).read_text()
+        except (OSError, UnicodeDecodeError) as e:
+            warnings.warn(f"Cannot read SS file {path}: {e}. Running DSSP instead.")
+            return None
+
+        if "  #  RESIDUE" in text:
+            ss: list[str] = []
+            in_table = False
+            for line in text.splitlines():
+                if line.startswith("  #  RESIDUE"):
+                    in_table = True
+                elif in_table and len(line) > 16 and line[13] != "!":  # "!" = chain break
+                    ss.append(line[16])
+        else:
+            ss = list("".join(text.split()))
+            if set(ss) - set("HEC"):
+                warnings.warn(f"SS file {path} is not a 3-state H/E/C string. Running DSSP instead.")
+                return None
+
+        if len(ss) != n_residues:
+            warnings.warn(
+                f"SS file {path} has {len(ss)} residues but the structure has "
+                f"{n_residues}. Running DSSP instead."
+            )
+            return None
+        return ss
 
     def _fallback_ss_assignment(
         self,

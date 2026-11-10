@@ -326,6 +326,7 @@ class StructureCharacterizer:
         msa_path: Optional[str] = None,
         metadata: Optional[dict] = None,
         metadata_path: Optional[str] = None,
+        ss_path: Optional[str] = None,
     ):
         """Initialize the characterizer.
 
@@ -342,8 +343,11 @@ class StructureCharacterizer:
             msa_path: Optional path to MSA parquet file.
             metadata: Optional dict of run metadata (from metadata.json).
             metadata_path: Optional path to metadata.json file.
+            ss_path: Optional precomputed secondary structure (3-state H/E/C
+                file or DSSP file), used instead of running DSSP.
         """
         self.structure = structure
+        self.ss_path = ss_path
         self.contact_cutoff = contact_cutoff
         self.dpi = dpi
 
@@ -498,7 +502,9 @@ class StructureCharacterizer:
             ss_seq = ["C"] * n
         else:
             try:
-                ss_seq = self.ss_analyzer.assign_ss(self.structure, simplify=True)
+                ss_seq = self.ss_analyzer.assign_ss(
+                    self.structure, simplify=True, ss_file=self.ss_path
+                )
             except Exception:
                 ss_seq = ["C"] * n
         h, e, c = ss_seq.count("H"), ss_seq.count("E"), ss_seq.count("C")
